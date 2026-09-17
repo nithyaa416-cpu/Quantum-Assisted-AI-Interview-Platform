@@ -2,6 +2,13 @@
 __pycache__/
 *.py[codz]
 *$py.class
+.pytest_cache/
+venv/
+.venv/
+
+#IDE
+.vscode/
+.idea/
 
 # C extensions
 *.so
@@ -156,6 +163,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.env.*
 
 # Spyder project settings
 .spyderproject
@@ -216,3 +224,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+#react/Node
+node_modules/
+frontend/node_modules
+dist/
+frontend/dist/
