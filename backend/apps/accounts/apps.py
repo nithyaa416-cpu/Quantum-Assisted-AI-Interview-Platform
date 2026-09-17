@@ -1,0 +1,12 @@
+"""App config for accounts."""
+from django.apps import AppConfig
+
+
+class AccountsConfig(AppConfig):
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'apps.accounts'
+    verbose_name = 'Accounts'
+
+    def ready(self):
+        # Ensure signals are connected
+        import apps.accounts.models  # noqa: F401
