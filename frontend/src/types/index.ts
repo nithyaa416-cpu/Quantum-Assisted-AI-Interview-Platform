@@ -73,7 +73,9 @@ export interface RegisterFormData {
   email: string
   password: string
   confirm_password: string
+  otp?: string
 }
+
 
 export interface LoginFormData {
   email: string

@@ -12,18 +12,19 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import StudentProfile
+from .models import StudentProfile, EmailVerificationOTP
 
 User = get_user_model()
 
 
 class RegisterSerializer(serializers.Serializer):
-    """Validates registration input and creates User + auto-linked StudentProfile."""
+    """Validates registration input, verifies OTP, and creates User + auto-linked StudentProfile."""
 
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True, min_length=8)
     full_name = serializers.CharField(max_length=255)
+    otp = serializers.CharField(write_only=True, min_length=6, max_length=6)
 
     def validate_email(self, value: str) -> str:
         email = value.lower().strip()
@@ -49,16 +50,55 @@ class RegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {'confirm_password': 'Passwords do not match.'}
             )
+
+        email = attrs['email'].lower().strip()
+        otp_input = attrs.get('otp', '').strip()
+
+        otp_record = EmailVerificationOTP.objects.filter(
+            email=email,
+            is_verified=False
+        ).first()
+
+        if not otp_record:
+            raise serializers.ValidationError(
+                {'otp': 'No verification code found for this email. Please request a code.'}
+            )
+
+        if otp_record.is_expired():
+            raise serializers.ValidationError(
+                {'otp': 'Verification code has expired. Please request a new code.'}
+            )
+
+        if otp_record.attempts >= 5:
+            raise serializers.ValidationError(
+                {'otp': 'Too many incorrect attempts. Please request a new code.'}
+            )
+
+        if otp_record.otp_code != otp_input:
+            otp_record.attempts += 1
+            otp_record.save(update_fields=['attempts'])
+            raise serializers.ValidationError(
+                {'otp': 'Invalid verification code.'}
+            )
+
         return attrs
 
     def create(self, validated_data: dict):
         validated_data.pop('confirm_password')
+        validated_data.pop('otp')
+        email = validated_data['email']
+
         user = User.objects.create_user(
-            email=validated_data['email'],
+            email=email,
             password=validated_data['password'],
             full_name=validated_data['full_name'],
         )
+
+        # Mark OTP as verified
+        EmailVerificationOTP.objects.filter(email=email).update(is_verified=True)
+
         return user
+
 
 
 class LoginSerializer(serializers.Serializer):
