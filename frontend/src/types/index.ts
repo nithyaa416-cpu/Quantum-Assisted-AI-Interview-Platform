@@ -295,6 +295,9 @@ export interface StartInterviewPayload {
   session_type: 'technical' | 'hr' | 'project' | 'coding' | 'mixed'
   difficulty: 'beginner' | 'intermediate' | 'advanced'
   target_role_id?: string
+  target_role_name?: string
+  job_description?: string
+  resume_id?: string
 }
 
 export interface SubmitResponseResult {

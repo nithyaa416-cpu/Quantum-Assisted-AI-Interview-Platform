@@ -12,37 +12,82 @@ import type { LoginFormData } from '@/types'
 import { getApiErrorMessage } from '@/utils/errors'
 import api from '@/services/api'
 
-// ── Password reset panel (inline, no email required) ────────────────────────
+// ── Password reset panel (OTP-secured 4-step flow) ──────────────────────────
 function ResetPasswordPanel({ onCancel }: { onCancel: () => void }) {
-  const [step, setStep]         = useState<'find' | 'reset' | 'done'>('find')
+  const [step, setStep]         = useState<'find' | 'otp' | 'reset' | 'done'>('find')
   const [email, setEmail]       = useState('')
+  const [maskedEmail, setMasked]= useState('')
+  const [otp, setOtp]           = useState('')
   const [newPwd, setNewPwd]     = useState('')
   const [confirm, setConfirm]   = useState('')
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState<string | null>(null)
   const [showPwd, setShowPwd]   = useState(false)
+  const [cooldown, setCooldown] = useState(0)
 
+  // Cooldown timer for resend OTP
+  const startCooldown = () => {
+    setCooldown(60)
+    const timer = setInterval(() => {
+      setCooldown(prev => {
+        if (prev <= 1) { clearInterval(timer); return 0 }
+        return prev - 1
+      })
+    }, 1000)
+  }
+
+  // Step 1: Check if email exists
   const handleFind = async () => {
     if (!email.trim()) { setError('Enter your email address.'); return }
     setLoading(true); setError(null)
     try {
-      // Check if email exists by attempting a login with dummy password —
-      // 401 means account exists, 400 means email not found
-      await api.post('/api/auth/login', { email: email.trim(), password: '___dummy___' })
+      const res = await api.post('/api/auth/check-email/', { email: email.trim() })
+      setMasked(res.data?.data?.masked_email || email)
+      // Immediately send OTP after finding the account
+      await api.post('/api/auth/reset-password/send-otp/', { email: email.trim() })
+      startCooldown()
+      setStep('otp')
     } catch (err: any) {
-      const code = err?.response?.data?.error?.code
-      const msg  = err?.response?.data?.error?.message ?? ''
-      // If error is AUTH_FAILED, email exists → proceed to reset
-      if (code === 'AUTH_FAILED' || msg.toLowerCase().includes('invalid')) {
-        setStep('reset')
-      } else {
-        setError('No account found with that email address.')
-      }
+      const msg = err?.response?.data?.error?.message
+      setError(msg || 'No account found with that email address.')
     } finally {
       setLoading(false)
     }
   }
 
+  // Resend OTP
+  const handleResendOtp = async () => {
+    if (cooldown > 0) return
+    setLoading(true); setError(null)
+    try {
+      await api.post('/api/auth/reset-password/send-otp/', { email: email.trim() })
+      startCooldown()
+      setOtp('')
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message || 'Failed to resend code.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Step 2: Verify OTP with backend → go to reset
+  const handleVerifyOtp = async () => {
+    if (otp.length !== 6) { setError('Enter the 6-digit code sent to your email.'); return }
+    setLoading(true); setError(null)
+    try {
+      await api.post('/api/auth/reset-password/verify-otp/', {
+        email: email.trim(),
+        otp: otp.trim(),
+      })
+      setStep('reset')
+    } catch (err: any) {
+      setError(getApiErrorMessage(err, 'Invalid or expired verification code.'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Step 3: Submit new password with OTP
   const handleReset = async () => {
     if (newPwd.length < 8)         { setError('Password must be at least 8 characters.'); return }
     if (!/\d/.test(newPwd))        { setError('Password must contain at least one number.'); return }
@@ -54,7 +99,11 @@ function ResetPasswordPanel({ onCancel }: { onCancel: () => void }) {
 
     setLoading(true); setError(null)
     try {
-      await api.post('/api/auth/reset-password/', { email: email.trim(), new_password: newPwd })
+      await api.post('/api/auth/reset-password/', {
+        email: email.trim(),
+        otp: otp.trim(),
+        new_password: newPwd,
+      })
       setStep('done')
     } catch (err: any) {
       setError(getApiErrorMessage(err, 'Reset failed. Please try again.'))
@@ -92,6 +141,7 @@ function ResetPasswordPanel({ onCancel }: { onCancel: () => void }) {
         </div>
       )}
 
+      {/* Step 1: Find account by email */}
       {step === 'find' && (
         <>
           <p className="text-slate-400 text-sm">Enter the email address you registered with.</p>
@@ -117,10 +167,45 @@ function ResetPasswordPanel({ onCancel }: { onCancel: () => void }) {
         </>
       )}
 
+      {/* Step 2: Enter OTP sent to email */}
+      {step === 'otp' && (
+        <>
+          <p className="text-slate-400 text-sm">
+            A 6-digit verification code has been sent to <span className="text-brand-400">{maskedEmail}</span>.
+          </p>
+          <div>
+            <label className="label">Verification code</label>
+            <input
+              type="text"
+              className="input-base text-center tracking-[0.3em] text-lg font-mono"
+              placeholder="000000"
+              maxLength={6}
+              value={otp}
+              onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              onKeyDown={e => e.key === 'Enter' && handleVerifyOtp()}
+              autoFocus
+            />
+          </div>
+          <button onClick={handleVerifyOtp} disabled={loading} className="btn-primary w-full">
+            {loading ? 'Verifying…' : 'Verify Code'}
+          </button>
+          <div className="flex items-center justify-center">
+            <button
+              onClick={handleResendOtp}
+              disabled={cooldown > 0 || loading}
+              className="text-xs text-slate-500 hover:text-brand-400 transition-colors disabled:opacity-40"
+            >
+              {cooldown > 0 ? `Resend code in ${cooldown}s` : 'Resend code'}
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Step 3: Set new password */}
       {step === 'reset' && (
         <>
           <p className="text-slate-400 text-sm">
-            Account found for <span className="text-brand-400">{email}</span>. Set a new password.
+            Code verified for <span className="text-brand-400">{maskedEmail}</span>. Set your new password.
           </p>
           <div>
             <label className="label">New password</label>

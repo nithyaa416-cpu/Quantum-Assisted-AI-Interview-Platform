@@ -13,7 +13,6 @@ const nav = [
   { to: '/interview/new', icon: MessageSquare,   label: 'Interview'    },
   { to: '/profile',       icon: User,            label: 'My Profile'   },
   { to: '/resumes',       icon: FileText,        label: 'Resumes'      },
-  { to: '/target-roles',  icon: Target,          label: 'Target Roles' },
   { to: '/preparation',   icon: Brain,           label: 'Prep Plan'    },
 ]
 

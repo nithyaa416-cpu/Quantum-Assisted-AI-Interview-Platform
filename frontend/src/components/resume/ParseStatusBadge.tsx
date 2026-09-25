@@ -8,10 +8,10 @@ interface ParseStatusBadgeProps {
 }
 
 const config = {
-  pending:    { icon: Clock,        color: 'text-amber-400  bg-amber-400/10  border-amber-400/20',  label: 'Pending'    },
-  processing: { icon: Loader2,      color: 'text-blue-400   bg-blue-400/10   border-blue-400/20',   label: 'Processing' },
-  completed:  { icon: CheckCircle2, color: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20', label: 'Parsed'  },
-  failed:     { icon: XCircle,      color: 'text-red-400    bg-red-400/10    border-red-400/20',    label: 'Failed'     },
+  pending:    { icon: Clock,        color: 'text-brand-400  bg-brand-400/10  border-brand-400/20',  label: 'Ready for Interview' },
+  processing: { icon: Loader2,      color: 'text-blue-400   bg-blue-400/10   border-blue-400/20',   label: 'Extracting' },
+  completed:  { icon: CheckCircle2, color: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20', label: 'Parsed' },
+  failed:     { icon: XCircle,      color: 'text-red-400    bg-red-400/10    border-red-400/20',    label: 'Failed' },
 }
 
 export function ParseStatusBadge({ status, className }: ParseStatusBadgeProps) {

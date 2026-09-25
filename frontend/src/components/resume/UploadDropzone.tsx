@@ -12,8 +12,10 @@ export function UploadDropzone({ onFile, isUploading }: UploadDropzoneProps) {
   const [error, setError]           = useState<string | null>(null)
 
   const validate = (file: File): string | null => {
-    if (!file.name.toLowerCase().endsWith('.pdf'))
-      return 'Only PDF files are supported.'
+    const validExtensions = ['.pdf', '.docx', '.doc']
+    const name = file.name.toLowerCase()
+    if (!validExtensions.some(ext => name.endsWith(ext)))
+      return 'Supported formats: PDF, DOCX, DOC.'
     if (file.size > 10 * 1024 * 1024)
       return 'File size must be under 10 MB.'
     return null
@@ -55,7 +57,7 @@ export function UploadDropzone({ onFile, isUploading }: UploadDropzoneProps) {
       >
         <input
           type="file"
-          accept=".pdf"
+          accept=".pdf,.docx,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword"
           className="hidden"
           onChange={onInputChange}
           disabled={isUploading}
@@ -83,7 +85,7 @@ export function UploadDropzone({ onFile, isUploading }: UploadDropzoneProps) {
                 <p className="text-xs text-slate-500 mt-0.5">
                   or <span className="text-brand-400">click to browse</span>
                 </p>
-                <p className="text-xs text-slate-600 mt-1.5">PDF only · Max 10 MB</p>
+                <p className="text-xs text-slate-600 mt-1.5">PDF, DOCX, DOC · Max 10 MB</p>
               </div>
             </>
           )}
