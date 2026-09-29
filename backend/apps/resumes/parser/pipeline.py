@@ -77,32 +77,30 @@ def parse_resume_file(file_path: str) -> dict[str, Any]:
         # Step 2: Split into sections
         sections = split_into_sections(raw_text)
 
-        # Step 3: Extract contact from the top of the resume
-        header_text = sections.get("header", raw_text[:500])
-        result["contact"] = extract_contact(raw_text[:1000])
+        # Step 3: Extract contact details across the document
+        result["contact"] = extract_contact(raw_text)
 
         # Step 4: Extract skills
         skills_text = sections.get("skills", "")
-        # Also scan full document for skills not in the skills section
         result["skills"] = _deduplicate_skills(
             extract_skills(skills_text) + extract_skills(raw_text)
         )
 
         # Step 5: Education
         edu_text = sections.get("education", "")
-        result["education"] = extract_education(edu_text or raw_text)
+        result["education"] = extract_education(edu_text if edu_text else raw_text)
 
         # Step 6: Experience
         exp_text = sections.get("experience", "")
-        result["experience"] = extract_experience(exp_text or raw_text)
+        result["experience"] = extract_experience(exp_text if exp_text else raw_text)
 
-        # Step 7: Projects
+        # Step 7: Projects (supports explicit section or inline project description fallback)
         proj_text = sections.get("projects", "")
-        result["projects"] = extract_projects(proj_text or raw_text)
+        result["projects"] = extract_projects(proj_text, fallback_full_text=raw_text)
 
         # Step 8: Certifications
         cert_text = sections.get("certifications", "")
-        result["certifications"] = extract_certifications(cert_text or raw_text)
+        result["certifications"] = extract_certifications(cert_text if cert_text else raw_text)
 
         # Step 9: Generate summary
         result["summary"] = generate_summary(

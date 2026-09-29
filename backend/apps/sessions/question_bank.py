@@ -22,27 +22,28 @@ class QuestionEntry(TypedDict):
 
 WARMUP_QUESTIONS: list[QuestionEntry] = [
     {
-        "text": "Tell me about yourself and what brings you to this interview today.",
+        "text": "Hello! Welcome to your interview today. Could you please start by introducing yourself, stating your full name, your educational background, and what role you are aiming for?",
         "topic": "introduction",
-        "expected_concepts": ["background", "skills", "motivation", "goals"],
+        "expected_concepts": ["name", "background", "education", "goals", "skills"],
         "follow_ups": [
-            "Can you elaborate on your technical background a bit more?",
-            "What specific skills are you most confident about?",
+            "Could you elaborate a bit more on what inspired you to pursue this field?",
+            "What specific areas of technology are you most enthusiastic about?",
         ],
-        "harder_follow_up": "That's a great overview. What makes you stand out from other candidates for this role specifically?",
+        "harder_follow_up": "That is a great introduction. What distinct strengths do you bring that set you apart as a candidate?",
     },
     {
-        "text": "Walk me through your most recent project. What problem did it solve?",
+        "text": "Thank you! Could you walk me through your most notable technical project or experience? What problem were you solving, and how did you choose your technology stack?",
         "topic": "project overview",
-        "expected_concepts": ["problem statement", "solution", "impact", "technology"],
+        "expected_concepts": ["problem statement", "technologies", "architecture", "impact"],
         "follow_ups": [
-            "What was the main technical challenge you faced?",
-            "How did you decide on the technology stack?",
+            "What was the biggest technical hurdle you faced in that project, and how did you resolve it?",
+            "If you were to rebuild it today, what would you optimize or do differently?",
         ],
-        "harder_follow_up": "How would you scale that solution to handle 10x the current load?",
+        "harder_follow_up": "How would you scale that project architecture to handle thousands of concurrent users reliably?",
     },
     {
-        "text": "What are your strongest technical skills, and how have you applied them recently?",
+        "text": "What are your core technical competencies and skills, and how have you applied them recently in real-world scenarios?",
+
         "topic": "skills",
         "expected_concepts": ["technical skills", "practical application", "recent work"],
         "follow_ups": [

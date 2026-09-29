@@ -5,6 +5,7 @@ from decouple import config
 DEBUG = True
 
 CORS_ALLOW_ALL_ORIGINS = True  # Allow all origins in dev
+X_FRAME_OPTIONS = 'SAMEORIGIN'  # Allow iframe preview of resumes on localhost
 
 # ---------------------------------------------------------------------------
 # Database: use SQLite when USE_SQLITE=True (for local dev without PostgreSQL)

@@ -7,6 +7,8 @@ from .interview_views import (
     SubmitResponseView,
     EndInterviewView,
     InterviewHistoryView,
+    TTSAudioView,
+    TranscribeAudioView,
 )
 
 urlpatterns = [
@@ -16,4 +18,6 @@ urlpatterns = [
     path('sessions/<uuid:pk>/respond/',        SubmitResponseView.as_view(),             name='interview-respond'),
     path('sessions/<uuid:pk>/end/',            EndInterviewView.as_view(),               name='interview-end'),
     path('sessions/<uuid:pk>/history/',        InterviewHistoryView.as_view(),           name='interview-history'),
+    path('tts/',                               TTSAudioView.as_view(),                   name='interview-tts'),
+    path('transcribe/',                        TranscribeAudioView.as_view(),            name='interview-transcribe'),
 ]

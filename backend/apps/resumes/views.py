@@ -46,6 +46,7 @@ def _run_parse(resume_id: str) -> None:
                 'projects':       result['projects'],
                 'certifications': result['certifications'],
                 'summary':        result['summary'],
+                'raw_text':       result.get('raw_text', ''),
                 'word_count':     result['word_count'],
                 'parse_time_ms':  result['parse_time_ms'],
             }
@@ -156,6 +157,7 @@ class ResumeUploadView(APIView):
             version=next_version,
             is_active=True,
             parse_status='pending',
+            parsed_data={},
         )
 
         logger.info('Resume uploaded (stored ready for interview): %s by %s (v%d)', resume.id, request.user.email, next_version)
@@ -204,6 +206,11 @@ class ResumeDetailView(APIView):
                 {'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'Resume not found.', 'details': {}}},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        if not resume.is_parsed and resume.file:
+            try:
+                parse_resume_now(resume)
+            except Exception as e:
+                logger.warning('Auto parse on view failed: %s', e)
         return Response({'success': True, 'data': ResumeDetailSerializer(resume).data})
 
     def patch(self, request, pk):
@@ -226,14 +233,6 @@ class ResumeDetailView(APIView):
             resume.parsed_data[field] = value
 
         resume.save(update_fields=['parsed_data'])
-
-        # Sync skills to profile if skills were updated
-        if 'skills' in serializer.validated_data:
-            profile = resume.student
-            skill_names = [s['name'] for s in serializer.validated_data['skills']]
-            profile.skills = skill_names
-            profile.save(update_fields=['skills'])
-
         return Response({'success': True, 'data': ResumeDetailSerializer(resume).data})
 
     def delete(self, request, pk):

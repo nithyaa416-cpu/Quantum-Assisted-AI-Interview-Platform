@@ -88,8 +88,8 @@ class TestResumeUpload:
 
     def test_upload_non_pdf_returns_400(self, auth_client):
         client, _ = auth_client
-        txt = SimpleUploadedFile('cv.txt', b'plain text', content_type='text/plain')
-        resp = client.post('/api/resumes/upload/', {'file': txt}, format='multipart')
+        img = SimpleUploadedFile('photo.png', b'\x89PNG\r\n\x1a\n', content_type='image/png')
+        resp = client.post('/api/resumes/upload/', {'file': img}, format='multipart')
         assert resp.status_code == http_status.HTTP_400_BAD_REQUEST
 
     def test_upload_oversized_file_returns_400(self, auth_client):

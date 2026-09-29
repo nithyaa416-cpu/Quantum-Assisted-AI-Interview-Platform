@@ -176,6 +176,7 @@ export interface ResumeListItem {
   id: string
   student_name: string
   original_filename: string
+  file_url?: string
   parse_status: ParseStatus
   is_parsed: boolean
   parsed_at: string | null
@@ -187,6 +188,7 @@ export interface ResumeListItem {
 
 export interface ResumeDetail extends ResumeListItem {
   parse_error: string
+  raw_text?: string
   contact: ResumeContact
   skills: ResumeSkill[]
   projects: ResumeProject[]
@@ -284,6 +286,7 @@ export interface InterviewListItem {
   target_role: string | null
   turn_count: number
   answered_count: number
+  avg_score?: number | null
   started_at: string | null
   ended_at: string | null
   duration_seconds: number | null
@@ -320,6 +323,7 @@ export interface SessionSummary {
   difficulty: string
   target_role_name: string | null
   question_count: number
+  answered_count?: number
   started_at: string | null
   ended_at: string | null
   duration_seconds: number | null

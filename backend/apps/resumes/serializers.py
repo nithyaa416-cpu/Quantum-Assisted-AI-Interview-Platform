@@ -7,23 +7,32 @@ class ResumeListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for list views — excludes heavy parsed_data."""
     student_name = serializers.CharField(source='student.full_name', read_only=True)
     skills_count = serializers.SerializerMethodField()
+    file_url     = serializers.SerializerMethodField()
 
     class Meta:
         model = Resume
         fields = [
-            'id', 'student_name', 'original_filename', 'parse_status',
+            'id', 'student_name', 'original_filename', 'file_url', 'parse_status',
             'is_parsed', 'parsed_at', 'version', 'is_active',
             'skills_count', 'created_at',
         ]
         read_only_fields = fields
 
     def get_skills_count(self, obj) -> int:
-        return len(obj.parsed_data.get('skills', []))
+        data = obj.parsed_data or {}
+        return len(data.get('skills', []))
+
+    def get_file_url(self, obj) -> str:
+        if obj.file:
+            return obj.file.url
+        return ''
 
 
 class ResumeDetailSerializer(serializers.ModelSerializer):
     """Full serializer including all parsed_data fields."""
     student_name = serializers.CharField(source='student.full_name', read_only=True)
+    file_url     = serializers.SerializerMethodField()
+    raw_text     = serializers.SerializerMethodField()
     skills       = serializers.SerializerMethodField()
     projects     = serializers.SerializerMethodField()
     education    = serializers.SerializerMethodField()
@@ -35,42 +44,44 @@ class ResumeDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Resume
         fields = [
-            'id', 'student_name', 'original_filename', 'parse_status', 'parse_error',
+            'id', 'student_name', 'original_filename', 'file_url', 'raw_text',
+            'parse_status', 'parse_error',
             'is_parsed', 'parsed_at', 'version', 'is_active', 'created_at',
             'contact', 'skills', 'projects', 'education', 'experience',
             'certifications', 'summary',
         ]
         read_only_fields = fields
 
-    def get_skills(self, obj):        return obj.parsed_data.get('skills', [])
-    def get_projects(self, obj):      return obj.parsed_data.get('projects', [])
-    def get_education(self, obj):     return obj.parsed_data.get('education', [])
-    def get_experience(self, obj):    return obj.parsed_data.get('experience', [])
-    def get_certifications(self, obj): return obj.parsed_data.get('certifications', [])
-    def get_summary(self, obj):       return obj.parsed_data.get('summary', '')
-    def get_contact(self, obj):       return obj.parsed_data.get('contact', {})
+    def get_file_url(self, obj) -> str:
+        if obj.file:
+            return obj.file.url
+        return ''
+
+    def get_raw_text(self, obj):       return (obj.parsed_data or {}).get('raw_text', '')
+    def get_skills(self, obj):        return (obj.parsed_data or {}).get('skills', [])
+    def get_projects(self, obj):      return (obj.parsed_data or {}).get('projects', [])
+    def get_education(self, obj):     return (obj.parsed_data or {}).get('education', [])
+    def get_experience(self, obj):    return (obj.parsed_data or {}).get('experience', [])
+    def get_certifications(self, obj): return (obj.parsed_data or {}).get('certifications', [])
+    def get_summary(self, obj):       return (obj.parsed_data or {}).get('summary', '')
+    def get_contact(self, obj):       return (obj.parsed_data or {}).get('contact', {})
 
 
 class ResumeUploadSerializer(serializers.Serializer):
     """Validates the uploaded file before creating a Resume record."""
     file = serializers.FileField()
 
-    ALLOWED_CONTENT_TYPES = [
-        'application/pdf',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    ]
+    ALLOWED_EXTENSIONS = ('.pdf', '.docx', '.doc', '.txt')
     MAX_SIZE_BYTES = 10 * 1024 * 1024   # 10 MB
 
     def validate_file(self, value):
-        ct = getattr(value, 'content_type', '')
-        if ct and ct not in self.ALLOWED_CONTENT_TYPES:
-            raise serializers.ValidationError('Only PDF files are accepted.')
         if value.size > self.MAX_SIZE_BYTES:
             raise serializers.ValidationError('File size must be under 10 MB.')
-        # Extension check
+
         name = value.name.lower()
-        if not (name.endswith('.pdf') or name.endswith('.docx')):
-            raise serializers.ValidationError('Only .pdf files are accepted.')
+        if not any(name.endswith(ext) for ext in self.ALLOWED_EXTENSIONS):
+            raise serializers.ValidationError('Only .pdf, .docx, and .doc files are accepted.')
+
         return value
 
 

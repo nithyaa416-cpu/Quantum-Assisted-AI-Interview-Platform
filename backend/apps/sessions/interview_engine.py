@@ -12,6 +12,7 @@ All decisions are made per-student, based on their individual session state.
 import random
 import logging
 from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from .question_bank import (
@@ -22,6 +23,7 @@ from .question_bank import (
     CLOSING_QUESTIONS,
     get_technical_questions,
 )
+from .ai_services import generate_llm_interview_question
 
 logger = logging.getLogger(__name__)
 
@@ -70,12 +72,17 @@ class SessionContext:
     last_question_entry: Optional[QuestionEntry]
     asked_question_texts: set[str]
     phase_scores: dict[str, list[float]]   # phase → list of scores
+    candidate_name: str = ""
+    target_role_name: str = ""
+    resume_skills: list[str] = field(default_factory=list)
+    resume_projects: list[str] = field(default_factory=list)
+    last_answer_text: str = ""
 
 
 class AdaptiveInterviewEngine:
     """
     Determines the next interview action based on full session state.
-    Pure logic — no DB access. Caller reads/writes the DB.
+    Uses dynamic LLM question generation with conversational progression.
     """
 
     def decide_next_turn(self, ctx: SessionContext) -> TurnDecision:
@@ -83,7 +90,30 @@ class AdaptiveInterviewEngine:
         Main decision function. Returns what question to ask next.
         Called after each student response (or at session start).
         """
-        # ── Check if interview should end ──────────────────────────────────────
+        # ── 1. Turn 1 is ALWAYS the welcoming personal introduction ───────────
+        if ctx.turn_number == 0:
+            intro_q = generate_llm_interview_question(
+                candidate_name=ctx.candidate_name,
+                target_role=ctx.target_role_name or ctx.domain,
+                resume_skills=ctx.resume_skills,
+                resume_projects=ctx.resume_projects,
+                current_phase="warmup",
+                turn_number=1,
+                difficulty="easy",
+            )
+            return TurnDecision(
+                question_text=intro_q["question_text"],
+                phase="warmup",
+                topic=intro_q.get("topic", "introduction"),
+                difficulty_level="easy",
+                question_type="situational",
+                expected_concepts=intro_q.get("expected_concepts", ["name", "background", "education", "goals", "skills"]),
+                is_follow_up=False,
+                follow_up_reason=None,
+                should_end_interview=False,
+            )
+
+        # ── 2. Check if interview should end ───────────────────────────────────
         if self._should_end(ctx):
             closing = self._get_closing(ctx)
             return TurnDecision(
@@ -98,71 +128,34 @@ class AdaptiveInterviewEngine:
                 should_end_interview=False,
             )
 
-        # ── Follow-up on weak answer ───────────────────────────────────────────
-        if (
-            ctx.last_answer_score is not None
-            and ctx.last_answer_score < WEAK_ANSWER_THRESHOLD
-            and ctx.last_question_entry
-            and ctx.last_question_entry['follow_ups']
-            and ctx.current_phase != 'closing'
-        ):
-            follow_up = random.choice(ctx.last_question_entry['follow_ups'])
-            return TurnDecision(
-                question_text=follow_up,
-                phase=ctx.current_phase,
-                topic=ctx.last_question_entry['topic'],
-                difficulty_level='easy',
-                question_type='conceptual',
-                expected_concepts=ctx.last_question_entry['expected_concepts'],
-                is_follow_up=True,
-                follow_up_reason='weak_answer',
-                should_end_interview=False,
-            )
-
-        # ── Harder follow-up on strong answer ─────────────────────────────────
-        if (
-            ctx.last_answer_score is not None
-            and ctx.last_answer_score >= GOOD_ANSWER_THRESHOLD
-            and ctx.last_question_entry
-            and ctx.last_question_entry.get('harder_follow_up')
-            and ctx.current_phase in ('technical', 'project')
-            and ctx.questions_in_phase < self._phase_limit(ctx) - 1
-            and random.random() < 0.5   # 50% chance to follow up on strong answers
-        ):
-            return TurnDecision(
-                question_text=ctx.last_question_entry['harder_follow_up'],
-                phase=ctx.current_phase,
-                topic=ctx.last_question_entry['topic'],
-                difficulty_level=self._next_difficulty(ctx.difficulty),
-                question_type='conceptual',
-                expected_concepts=ctx.last_question_entry['expected_concepts'],
-                is_follow_up=True,
-                follow_up_reason='strong_answer',
-                should_end_interview=False,
-            )
-
-        # ── Advance phase if limit reached ────────────────────────────────────
+        # ── 3. Determine active phase and adaptive difficulty ──────────────────
         next_phase = self._maybe_advance_phase(ctx)
         active_phase = next_phase or ctx.current_phase
-
-        # ── Select next question from the active phase ─────────────────────────
-        entry = self._pick_question(active_phase, ctx)
-        if not entry:
-            # Fallback — try closing
-            entry = self._get_closing(ctx)
-            active_phase = 'closing'
-
         diff = self._adaptive_difficulty(ctx)
 
+        # ── 4. Generate next question dynamically via LLM ──────────────────────
+        llm_q = generate_llm_interview_question(
+            candidate_name=ctx.candidate_name,
+            target_role=ctx.target_role_name or ctx.domain,
+            resume_skills=ctx.resume_skills,
+            resume_projects=ctx.resume_projects,
+            current_phase=active_phase,
+            turn_number=ctx.turn_number + 1,
+            difficulty=diff,
+            last_question_text=ctx.last_question_text,
+            last_answer_text=ctx.last_answer_text,
+            last_score=ctx.last_answer_score,
+        )
+
         return TurnDecision(
-            question_text=entry['text'],
+            question_text=llm_q["question_text"],
             phase=active_phase,
-            topic=entry['topic'],
+            topic=llm_q.get("topic", active_phase),
             difficulty_level=diff,
-            question_type=self._infer_type(active_phase),
-            expected_concepts=entry['expected_concepts'],
-            is_follow_up=False,
-            follow_up_reason=None,
+            question_type=llm_q.get("question_type", self._infer_type(active_phase)),
+            expected_concepts=llm_q.get("expected_concepts", []),
+            is_follow_up=True if ctx.turn_number >= 1 else False,
+            follow_up_reason="strong_answer" if (ctx.last_answer_score or 0) >= GOOD_ANSWER_THRESHOLD else ("weak_answer" if (ctx.last_answer_score or 0) < WEAK_ANSWER_THRESHOLD else None),
             should_end_interview=False,
         )
 

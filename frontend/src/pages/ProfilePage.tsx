@@ -125,7 +125,7 @@ export default function ProfilePage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-100">My Profile</h1>
           <p className="text-slate-400 text-sm mt-1">
-            Keep your profile updated so the AI can tailor your interviews.
+            Your candidate bio and portfolio profile for viewing.
           </p>
         </div>
         <Button
@@ -136,6 +136,14 @@ export default function ProfilePage() {
         >
           Save changes
         </Button>
+      </div>
+
+      {/* Info banner */}
+      <div className="flex items-center gap-3 p-3.5 rounded-xl bg-brand-500/10 border border-brand-500/20 text-xs text-brand-300">
+        <BookOpen className="h-4 w-4 flex-shrink-0 text-brand-400" />
+        <span>
+          <strong>Note:</strong> Profile details are for personal viewing and portfolio display. Main interviews are tailored directly from your chosen setup (role, job description, and selected resume).
+        </span>
       </div>
 
       {/* Personal info */}

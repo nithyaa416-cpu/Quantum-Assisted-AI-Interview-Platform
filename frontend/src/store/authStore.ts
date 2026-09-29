@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { User } from '@/types'
+import { queryClient } from '@/queryClient'
 
 interface AuthState {
   user: User | null
@@ -15,6 +16,11 @@ interface AuthState {
   logout: () => void
 }
 
+// Clear any residual localStorage auth from older persistent sessions
+try {
+  localStorage.removeItem('qaip-auth')
+} catch {}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
@@ -23,8 +29,11 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       isAuthenticated: false,
 
-      setAuth: (user, accessToken, refreshToken) =>
-        set({ user, accessToken, refreshToken, isAuthenticated: true }),
+      setAuth: (user, accessToken, refreshToken) => {
+        // Clear all cached query data so the newly logged-in account gets fresh isolated data
+        queryClient.clear()
+        set({ user, accessToken, refreshToken, isAuthenticated: true })
+      },
 
       setAccessToken: (token) =>
         set({ accessToken: token }),
@@ -32,13 +41,20 @@ export const useAuthStore = create<AuthState>()(
       updateUser: (user) =>
         set({ user }),
 
-      logout: () =>
-        set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false }),
+      logout: () => {
+        try {
+          sessionStorage.removeItem('qaip-auth')
+          localStorage.removeItem('qaip-auth')
+        } catch {}
+        // Instantly purge all query cache in memory
+        queryClient.clear()
+        set({ user: null, accessToken: null, refreshToken: null, isAuthenticated: false })
+      },
     }),
     {
       name: 'qaip-auth',
-      storage: createJSONStorage(() => localStorage),
-      // Only persist tokens and user — not derived state
+      storage: createJSONStorage(() => sessionStorage),
+      // Only persist tokens and user in session storage — erased on tab/browser close
       partialize: (state) => ({
         user: state.user,
         accessToken: state.accessToken,

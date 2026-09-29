@@ -64,6 +64,9 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+X_FRAME_OPTIONS = 'SAMEORIGIN'
+
+
 # ---------------------------------------------------------------------------
 # URL / WSGI
 # ---------------------------------------------------------------------------

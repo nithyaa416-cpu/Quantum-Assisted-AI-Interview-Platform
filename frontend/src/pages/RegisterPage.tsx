@@ -91,10 +91,9 @@ export default function RegisterPage() {
     }
 
     try {
-      const { user, tokens } = await authService.register(data)
-      setAuth(user, tokens.access, tokens.refresh)
-      toast.success(`Account verified! Welcome, ${user.full_name.split(' ')[0]}!`)
-      navigate('/dashboard', { replace: true })
+      await authService.register(data)
+      toast.success('Registration successful! Please sign in with your password.')
+      navigate('/login', { replace: true, state: { email: data.email, registered: true } })
     } catch (err) {
       const fieldErrors = getFieldErrors(err)
 

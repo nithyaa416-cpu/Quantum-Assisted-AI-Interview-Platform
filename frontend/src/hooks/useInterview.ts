@@ -1,22 +1,26 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { interviewService } from '@/services/interviewService'
+import { useAuthStore } from '@/store/authStore'
 import type { StartInterviewPayload } from '@/types'
 import { getApiErrorMessage } from '@/utils/errors'
 
 export function useInterviewSessions() {
+  const user = useAuthStore((s) => s.user)
   return useQuery({
-    queryKey: ['interview-sessions'],
+    queryKey: ['interview-sessions', user?.id],
     queryFn: interviewService.listSessions,
     staleTime: 1000 * 30,
+    enabled: !!user?.id,
   })
 }
 
 export function useInterviewSession(id: string | null) {
+  const user = useAuthStore((s) => s.user)
   return useQuery({
-    queryKey: ['interview-session', id],
+    queryKey: ['interview-session', user?.id, id],
     queryFn: () => interviewService.getSession(id!),
-    enabled: !!id,
+    enabled: !!id && !!user?.id,
     staleTime: 0,   // always fresh during active interview
     refetchOnWindowFocus: false,
   })

@@ -55,15 +55,31 @@ SKILL_ONTOLOGY: dict[str, list[str]] = {
         "jupyter", "colab", "notion", "slack", "linux", "vim",
         "sonarqube", "selenium", "cypress", "jest", "pytest", "junit",
     ],
-    "soft_skill": [
-        "communication", "teamwork", "leadership", "problem solving", "analytical",
-        "time management", "adaptability", "critical thinking", "collaboration",
-        "presentation", "project management", "agile", "scrum", "kanban",
+    "computer_science": [
+        "dsa", "data structures", "algorithms", "data structures and algorithms",
+        "object oriented programming", "oops", "system design", "operating systems",
+        "computer networks", "dbms",
     ],
 }
 
 # Flat normalisation map: alias → canonical name
 NORMALISATION_MAP: dict[str, str] = {
+    "dsa": "DSA (Data Structures & Algorithms)",
+    "data structures": "Data Structures",
+    "algorithms": "Algorithms",
+    "data structures and algorithms": "DSA (Data Structures & Algorithms)",
+    "oops": "OOP (Object-Oriented Programming)",
+    "object oriented programming": "OOP (Object-Oriented Programming)",
+    "dbms": "DBMS",
+    "html": "HTML",
+    "html5": "HTML5",
+    "css": "CSS",
+    "css3": "CSS3",
+    "sql": "SQL",
+    "javascript": "JavaScript",
+    "typescript": "TypeScript",
+    "java": "Java",
+    "python": "Python",
     "react.js": "React",
     "reactjs": "React",
     "react": "React",
@@ -89,8 +105,11 @@ NORMALISATION_MAP: dict[str, str] = {
     ".net": ".NET",
     "asp.net": "ASP.NET",
     "ml": "Machine Learning",
+    "machine learning": "Machine Learning",
     "dl": "Deep Learning",
+    "deep learning": "Deep Learning",
     "ai": "Artificial Intelligence",
+    "artificial intelligence": "Artificial Intelligence",
     "nlp": "NLP",
     "cv": "Computer Vision",
     "llm": "LLM",
@@ -99,6 +118,12 @@ NORMALISATION_MAP: dict[str, str] = {
     "ci/cd": "CI/CD",
     "tailwindcss": "Tailwind CSS",
     "tailwind": "Tailwind CSS",
+    "generative ai": "Generative AI",
+    "prompt engineering": "Prompt Engineering",
+    "chatgpt": "ChatGPT / LLMs",
+    "web development": "Web Development",
+    "frontend": "Frontend Development",
+    "front-end": "Frontend Development",
 }
 
 # Build flat skill list with category tags for fast lookup
@@ -106,6 +131,10 @@ ALL_SKILLS: dict[str, str] = {}   # lowercase_skill → category
 for category, skills in SKILL_ONTOLOGY.items():
     for skill in skills:
         ALL_SKILLS[skill.lower()] = category
+# Also add any aliases in NORMALISATION_MAP
+for alias in NORMALISATION_MAP:
+    if alias.lower() not in ALL_SKILLS:
+        ALL_SKILLS[alias.lower()] = "tool"
 
 
 def normalise_skill(raw: str) -> tuple[str, str]:
@@ -114,3 +143,4 @@ def normalise_skill(raw: str) -> tuple[str, str]:
     canonical = NORMALISATION_MAP.get(lower, raw.strip().title())
     category = ALL_SKILLS.get(lower, "tool")
     return canonical, category
+
