@@ -149,7 +149,7 @@ class EmailVerificationOTP(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f'OTP for {self.email} ({self.otp_code})'
+        return f'OTP for {self.email}'
 
     def is_expired(self, expiry_minutes: int = 10) -> bool:
         from django.utils import timezone
