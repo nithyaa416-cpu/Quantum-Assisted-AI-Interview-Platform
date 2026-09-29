@@ -12,6 +12,7 @@ const ProfilePage         = lazy(() => import('@/pages/ProfilePage'))
 const ResumesPage         = lazy(() => import('@/pages/ResumesPage'))
 const TargetRolePage      = lazy(() => import('@/pages/TargetRolePage'))
 const PreparationPage     = lazy(() => import('@/pages/PreparationPage'))
+const SessionsPage        = lazy(() => import('@/pages/SessionsPage'))
 const InterviewPage       = lazy(() => import('@/pages/InterviewPage'))
 const InterviewHistoryPage = lazy(() => import('@/pages/InterviewHistoryPage'))
 const NotFoundPage        = lazy(() => import('@/pages/NotFoundPage'))
@@ -34,6 +35,8 @@ export default function App() {
             }
           >
             <Route path="/dashboard"        element={<DashboardPage />} />
+            <Route path="/sessions"         element={<SessionsPage />} />
+            <Route path="/interview/sessions" element={<SessionsPage />} />
             <Route path="/profile"          element={<ProfilePage />} />
             <Route path="/resumes"          element={<ResumesPage />} />
             <Route path="/target-roles"     element={<TargetRolePage />} />

@@ -2,34 +2,39 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
 import toast from 'react-hot-toast'
 import { resumeService } from '@/services/resumeService'
+import { useAuthStore } from '@/store/authStore'
 import type { ParsedDataUpdate, TargetRole } from '@/types'
 
 // ── List ──────────────────────────────────────────────────────────────────────
 export function useResumes() {
+  const user = useAuthStore((s) => s.user)
   return useQuery({
-    queryKey: ['resumes'],
+    queryKey: ['resumes', user?.id],
     queryFn: resumeService.list,
     staleTime: 1000 * 30,
+    enabled: !!user?.id,
   })
 }
 
 // ── Detail ────────────────────────────────────────────────────────────────────
 export function useResumeDetail(id: string | null) {
+  const user = useAuthStore((s) => s.user)
   return useQuery({
-    queryKey: ['resume', id],
+    queryKey: ['resume', user?.id, id],
     queryFn: () => resumeService.getDetail(id!),
-    enabled: !!id,
+    enabled: !!id && !!user?.id,
     staleTime: 1000 * 30,
   })
 }
 
 // ── Status polling — auto-stops when completed/failed ─────────────────────────
 export function useResumeStatus(id: string | null) {
+  const user = useAuthStore((s) => s.user)
   const qc = useQueryClient()
   return useQuery({
-    queryKey: ['resume-status', id],
+    queryKey: ['resume-status', user?.id, id],
     queryFn: () => resumeService.getStatus(id!),
-    enabled: !!id,
+    enabled: !!id && !!user?.id,
     refetchInterval: (query) => {
       const s = query.state.data?.parse_status
       if (!s || s === 'completed' || s === 'failed') return false
@@ -38,13 +43,15 @@ export function useResumeStatus(id: string | null) {
     // When status becomes completed, invalidate detail + list
     select: (data) => {
       if (data.parse_status === 'completed' || data.parse_status === 'failed') {
-        qc.invalidateQueries({ queryKey: ['resume', id] })
+        qc.invalidateQueries({ queryKey: ['resume'] })
         qc.invalidateQueries({ queryKey: ['resumes'] })
       }
       return data
     },
   })
 }
+
+import { getApiErrorMessage } from '@/utils/errors'
 
 // ── Upload ────────────────────────────────────────────────────────────────────
 export function useUploadResume() {
@@ -53,10 +60,10 @@ export function useUploadResume() {
     mutationFn: (file: File) => resumeService.upload(file),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['resumes'] })
-      toast.success('Resume uploaded! Parsing started…')
+      toast.success('Resume uploaded successfully!')
     },
-    onError: () => {
-      toast.error('Upload failed. Please try again.')
+    onError: (err: unknown) => {
+      toast.error(getApiErrorMessage(err, 'Upload failed. Please try again.'))
     },
   })
 }
@@ -107,10 +114,12 @@ export function useReParse() {
 
 // ── Target roles ──────────────────────────────────────────────────────────────
 export function useTargetRoles() {
+  const user = useAuthStore((s) => s.user)
   return useQuery({
-    queryKey: ['target-roles'],
+    queryKey: ['target-roles', user?.id],
     queryFn: resumeService.listTargetRoles,
     staleTime: 1000 * 60,
+    enabled: !!user?.id,
   })
 }
 

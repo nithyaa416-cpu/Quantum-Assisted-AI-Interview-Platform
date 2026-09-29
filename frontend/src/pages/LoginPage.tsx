@@ -255,11 +255,19 @@ export default function LoginPage() {
   const setAuth  = useAuthStore((s) => s.setAuth)
   const from     = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/dashboard'
 
+  const stateEmail = (location.state as { email?: string })?.email ?? ''
+  const isJustRegistered = (location.state as { registered?: boolean })?.registered ?? false
+
   const [showPassword, setShowPassword] = useState(false)
   const [serverError,  setServerError]  = useState<string | null>(null)
   const [showReset,    setShowReset]    = useState(false)
 
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<LoginFormData>()
+  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<LoginFormData>({
+    defaultValues: {
+      email: stateEmail,
+      password: '',
+    },
+  })
 
   const onSubmit = async (data: LoginFormData) => {
     setServerError(null)
@@ -280,6 +288,14 @@ export default function LoginPage() {
       ) : (
         <>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate>
+            {/* Registration success notice */}
+            {isJustRegistered && (
+              <div className="flex items-center gap-2.5 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-sm">
+                <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                <span>Account created successfully! Enter your password to sign in.</span>
+              </div>
+            )}
+
             {/* Error banner */}
             {serverError && (
               <div className="space-y-2">

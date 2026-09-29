@@ -1,24 +1,29 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { targetRoleService } from '@/services/targetRoleService'
+import { useAuthStore } from '@/store/authStore'
 import type { CreateTargetRolePayload } from '@/types'
 import { getApiErrorMessage } from '@/utils/errors'
 
 // ── Student's roles ───────────────────────────────────────────────────────────
 export function useTargetRoles() {
+  const user = useAuthStore((s) => s.user)
   return useQuery({
-    queryKey: ['target-roles'],
+    queryKey: ['target-roles', user?.id],
     queryFn: targetRoleService.list,
     staleTime: 1000 * 60,
+    enabled: !!user?.id,
   })
 }
 
 export function usePrimaryRole() {
+  const user = useAuthStore((s) => s.user)
   return useQuery({
-    queryKey: ['target-roles', 'primary'],
+    queryKey: ['target-roles', user?.id, 'primary'],
     queryFn: targetRoleService.getPrimary,
     staleTime: 1000 * 60,
     retry: false,           // don't retry on 404 (no primary set)
+    enabled: !!user?.id,
   })
 }
 
@@ -33,11 +38,13 @@ export function useRoleCatalogue(params?: { domain?: string; q?: string }) {
 
 // ── Skill gap ─────────────────────────────────────────────────────────────────
 export function useSkillGap(roleId?: string) {
+  const user = useAuthStore((s) => s.user)
   return useQuery({
-    queryKey: ['skill-gap', roleId ?? 'primary'],
+    queryKey: ['skill-gap', user?.id, roleId ?? 'primary'],
     queryFn: () => targetRoleService.getSkillGap(roleId),
     staleTime: 1000 * 60 * 5,
     retry: false,
+    enabled: !!user?.id,
   })
 }
 

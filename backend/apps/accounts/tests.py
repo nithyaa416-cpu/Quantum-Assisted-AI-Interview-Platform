@@ -9,7 +9,7 @@ from rest_framework.test import APIClient
 from rest_framework import status
 from django.contrib.auth import get_user_model
 
-from apps.accounts.models import StudentProfile
+from apps.accounts.models import StudentProfile, EmailVerificationOTP
 
 User = get_user_model()
 
@@ -55,11 +55,13 @@ def auth_client(client, registered_user):
 class TestRegistration:
 
     def test_register_valid_data_returns_201_and_tokens(self, client):
+        EmailVerificationOTP.objects.create(email='newuser@example.com', otp_code='123456')
         response = client.post('/api/auth/register', {
             'email': 'newuser@example.com',
             'password': 'StrongPass99',
             'confirm_password': 'StrongPass99',
             'full_name': 'New User',
+            'otp': '123456',
         }, format='json')
 
         assert response.status_code == status.HTTP_201_CREATED
@@ -71,11 +73,13 @@ class TestRegistration:
         assert data['data']['user']['email'] == 'newuser@example.com'
 
     def test_register_auto_creates_student_profile(self, client):
+        EmailVerificationOTP.objects.create(email='profiletest@example.com', otp_code='654321')
         client.post('/api/auth/register', {
             'email': 'profiletest@example.com',
             'password': 'StrongPass99',
             'confirm_password': 'StrongPass99',
             'full_name': 'Profile Test',
+            'otp': '654321',
         }, format='json')
 
         user = User.objects.get(email='profiletest@example.com')

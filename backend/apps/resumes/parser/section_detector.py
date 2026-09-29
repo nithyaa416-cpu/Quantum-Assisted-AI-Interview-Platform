@@ -35,7 +35,14 @@ SECTION_PATTERNS: list[tuple[str, list[str]]] = [
     ]),
     ("contact", [
         r"contact(\s+information)?", r"personal\s+(information|details)",
-        r"profile", r"basic\s+information",
+        r"basic\s+information",
+    ]),
+    ("additional", [
+        r"additional\s+information", r"hobbies(\s+and\s+interests)?",
+        r"interests?", r"strengths?", r"extracurricular(\s+activities)?",
+    ]),
+    ("declaration", [
+        r"declaration",
     ]),
 ]
 

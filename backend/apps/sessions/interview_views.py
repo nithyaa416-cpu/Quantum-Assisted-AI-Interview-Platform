@@ -16,7 +16,7 @@ import logging
 from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
 from apps.resumes.models import TargetRole, Resume
@@ -80,10 +80,38 @@ def _build_context(session: InterviewSession) -> SessionContext:
         if resp and resp.score is not None:
             phase_scores.setdefault(q.phase, []).append(float(resp.score))
 
-    # Domain from target role
+    # Domain and target role
     domain = 'software_engineering'
+    target_role_name = 'Software Engineer'
     if session.target_role:
         domain = session.target_role.domain or 'software_engineering'
+        target_role_name = session.target_role.role_name
+
+    candidate_name = ""
+    if session.student:
+        candidate_name = session.student.full_name or ""
+        if not candidate_name and session.student.user:
+            candidate_name = f"{session.student.user.first_name} {session.student.user.last_name}".strip()
+            if not candidate_name:
+                candidate_name = session.student.user.email.split('@')[0]
+
+    # Extract resume skills and projects
+    resume_skills = []
+    resume_projects = []
+    try:
+        active_resume = session.student.resumes.filter(is_active=True).first() or session.student.resumes.first()
+        if active_resume and active_resume.parsed_data:
+            parsed = active_resume.parsed_data
+            resume_skills = [s['name'] for s in parsed.get('skills', []) if isinstance(s, dict) and 'name' in s]
+            resume_projects = [p.get('title', '') for p in parsed.get('projects', []) if isinstance(p, dict) and p.get('title')]
+    except Exception:
+        pass
+
+    last_answer_text = ""
+    if questions:
+        last_resp = responses.get(questions[-1].id)
+        if last_resp and last_resp.transcript:
+            last_answer_text = last_resp.transcript
 
     return SessionContext(
         session_type=session.session_type,
@@ -97,6 +125,11 @@ def _build_context(session: InterviewSession) -> SessionContext:
         last_question_entry=last_entry,
         asked_question_texts=asked_texts,
         phase_scores=phase_scores,
+        candidate_name=candidate_name,
+        target_role_name=target_role_name,
+        resume_skills=resume_skills,
+        resume_projects=resume_projects,
+        last_answer_text=last_answer_text,
     )
 
 
@@ -206,6 +239,8 @@ class InterviewSessionListCreateView(APIView):
         for s in sessions:
             q_count = s.questions.count()
             r_count = s.responses.count()
+            scores = [float(r.score) for r in s.responses.all() if r.score is not None]
+            avg_score = round((sum(scores) / len(scores)) * 10, 1) if scores else None
             result.append({
                 'id': str(s.id),
                 'session_type': s.session_type,
@@ -214,6 +249,7 @@ class InterviewSessionListCreateView(APIView):
                 'target_role': s.target_role.role_name if s.target_role else None,
                 'turn_count': q_count,
                 'answered_count': r_count,
+                'avg_score': avg_score,
                 'started_at': s.started_at,
                 'ended_at': s.ended_at,
                 'duration_seconds': s.duration_seconds,
@@ -255,24 +291,42 @@ class InterviewSessionListCreateView(APIView):
             target_role = TargetRole.objects.filter(student=profile, is_primary=True).first()
 
         resume_id = data.get('resume_id')
+        selected_resume = None
         extracted_resume_data = None
         if resume_id:
             try:
                 selected_resume = Resume.objects.get(pk=resume_id, student=profile)
-                extracted_resume_data = parse_resume_now(selected_resume)
-                logger.info(
-                    'Just-in-time resume parsed for interview: resume=%s skills=%d projects=%d',
-                    selected_resume.id,
-                    len(extracted_resume_data.get('skills', [])),
-                    len(extracted_resume_data.get('projects', []))
-                )
             except Resume.DoesNotExist:
                 logger.warning('Resume %s not found for student %s', resume_id, profile.id)
+        if not selected_resume:
+            selected_resume = Resume.objects.filter(student=profile, is_active=True).first()
 
-        session_notes = job_description
-        if extracted_resume_data and extracted_resume_data.get('skills'):
-            top_skills = ', '.join(s['name'] for s in extracted_resume_data.get('skills', [])[:8])
-            session_notes = f"{job_description}\n[Resume Skills: {top_skills}]" if job_description else f"[Resume Skills: {top_skills}]"
+        if selected_resume:
+            extracted_resume_data = parse_resume_now(selected_resume)
+            logger.info(
+                'Resume loaded for interview: resume=%s skills=%d projects=%d',
+                selected_resume.id,
+                len(extracted_resume_data.get('skills', [])),
+                len(extracted_resume_data.get('projects', [])),
+            )
+
+        note_parts = []
+        if job_description:
+            note_parts.append(job_description)
+        if profile.full_name:
+            note_parts.append(f"[Candidate Name: {profile.full_name}]")
+        if extracted_resume_data:
+            skills = extracted_resume_data.get('skills', [])
+            if skills:
+                top_skills = ', '.join(s['name'] for s in skills[:8])
+                note_parts.append(f"[Resume Skills: {top_skills}]")
+            projects = extracted_resume_data.get('projects', [])
+            if projects:
+                proj_names = ', '.join(p.get('title', '') for p in projects[:3] if p.get('title'))
+                if proj_names:
+                    note_parts.append(f"[Resume Projects: {proj_names}]")
+
+        session_notes = "\n".join(note_parts)
 
         # Create session
         session = InterviewSession.objects.create(
@@ -533,6 +587,67 @@ class EndInterviewView(APIView):
             'duration_seconds': session.duration_seconds,
             'message': 'Interview completed successfully.',
         })
+
+
+# ── Audio / Speech AI Endpoints ───────────────────────────────────────────────
+
+from django.http import HttpResponse
+from rest_framework.parsers import MultiPartParser, FormParser
+from .ai_services import generate_edge_tts_audio, transcribe_audio_faster_whisper
+
+
+class TTSAudioView(APIView):
+    """
+    POST or GET /api/interview/tts/
+    Generate high-fidelity neural MP3 audio using edge-tts.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        text = request.data.get('text', '').strip()
+        if not text:
+            return _err('BAD_REQUEST', 'Text parameter is required.')
+        voice = request.data.get('voice', 'en-US-AriaNeural')
+        audio_bytes = generate_edge_tts_audio(text, voice=voice)
+        if not audio_bytes:
+            return _err('SERVER_ERROR', 'Failed to generate audio.')
+        response = HttpResponse(audio_bytes, content_type='audio/mpeg')
+        response['Content-Disposition'] = 'inline; filename="speech.mp3"'
+        response['Cache-Control'] = 'public, max-age=3600'
+        return response
+
+    def get(self, request):
+        text = request.query_params.get('text', '').strip()
+        if not text:
+            return _err('BAD_REQUEST', 'Text parameter is required.')
+        voice = request.query_params.get('voice', 'en-US-AriaNeural')
+        audio_bytes = generate_edge_tts_audio(text, voice=voice)
+        if not audio_bytes:
+            return _err('SERVER_ERROR', 'Failed to generate audio.')
+        response = HttpResponse(audio_bytes, content_type='audio/mpeg')
+        response['Content-Disposition'] = 'inline; filename="speech.mp3"'
+        response['Cache-Control'] = 'public, max-age=3600'
+        return response
+
+
+class TranscribeAudioView(APIView):
+    """
+    POST /api/interview/transcribe/
+    Transcribe speech using faster-whisper.
+    Accepts multipart audio file ('audio').
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        audio_file = request.FILES.get('audio')
+        if not audio_file:
+            return _err('BAD_REQUEST', 'No audio file provided.')
+
+        audio_bytes = audio_file.read()
+        text = transcribe_audio_faster_whisper(audio_bytes)
+        return _ok({'text': text})
+
 
 
 class InterviewHistoryView(APIView):

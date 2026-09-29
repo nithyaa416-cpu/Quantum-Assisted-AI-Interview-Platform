@@ -43,4 +43,13 @@ export const interviewService = {
     const res = await api.get(`/api/interview/sessions/${sessionId}/history/`)
     return res.data.data
   },
+
+  async transcribeAudio(audioBlob: Blob): Promise<string> {
+    const formData = new FormData()
+    formData.append('audio', audioBlob, 'candidate_answer.webm')
+    const res = await api.post('/api/interview/transcribe/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return res.data?.data?.text || ''
+  },
 }

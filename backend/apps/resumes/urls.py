@@ -11,6 +11,7 @@ urlpatterns = [
     # Resume CRUD
     path('',                           ResumeListView.as_view(),          name='resume-list'),
     path('upload/',                    ResumeUploadView.as_view(),         name='resume-upload'),
+    path('upload',                     ResumeUploadView.as_view(),         name='resume-upload-noslash'),
     path('active/summary/',            ActiveResumeSummaryView.as_view(),  name='resume-active-summary'),
     path('<uuid:pk>/',                 ResumeDetailView.as_view(),         name='resume-detail'),
     path('<uuid:pk>/status/',          ResumeStatusView.as_view(),         name='resume-status'),
