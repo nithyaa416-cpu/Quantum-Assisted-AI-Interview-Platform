@@ -57,8 +57,6 @@ class Resume(models.Model):
         return f'Resume v{self.version} [{self.parse_status}] — {self.student.full_name}'
 
     def save(self, *args, **kwargs):
-        if self.is_active and not self.pk:
-            Resume.objects.filter(student=self.student, is_active=True).update(is_active=False)
         super().save(*args, **kwargs)
 
     @property

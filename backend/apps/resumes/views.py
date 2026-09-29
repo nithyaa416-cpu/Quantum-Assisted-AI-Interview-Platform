@@ -62,15 +62,6 @@ def _run_parse(resume_id: str) -> None:
             'parse_error', 'parsed_at'
         ])
 
-        # Auto-update student profile skills from resume
-        if result['success'] and result['skills']:
-            profile = resume.student
-            extracted_skill_names = [s['name'] for s in result['skills']]
-            existing = set(profile.skills or [])
-            merged = list(existing | set(extracted_skill_names))
-            profile.skills = merged
-            profile.save(update_fields=['skills'])
-
         logger.info(
             'Resume %s parsed: status=%s skills=%d projects=%d',
             resume_id, resume.parse_status,
@@ -91,12 +82,49 @@ def _run_parse(resume_id: str) -> None:
             pass
 
 
+def parse_resume_now(resume: Resume) -> dict:
+    """
+    Synchronously extracts text and structured data from a specific resume file.
+    Called on-demand when starting an interview with this resume.
+    """
+    if resume.is_parsed and resume.parsed_data:
+        return resume.parsed_data
+
+    file_path = resume.file.path
+    result = parse_resume_file(file_path)
+
+    if result.get('success'):
+        resume.parsed_data = {
+            'contact':        result.get('contact', {}),
+            'skills':         result.get('skills', []),
+            'education':      result.get('education', []),
+            'experience':     result.get('experience', []),
+            'projects':       result.get('projects', []),
+            'certifications': result.get('certifications', []),
+            'summary':        result.get('summary', ''),
+            'raw_text':       result.get('raw_text', ''),
+            'word_count':     result.get('word_count', 0),
+            'parse_time_ms':  result.get('parse_time_ms', 0),
+        }
+        resume.is_parsed = True
+        resume.parse_status = 'completed'
+        resume.parse_error = ''
+        resume.parsed_at = timezone.now()
+    else:
+        resume.parse_status = 'failed'
+        resume.parse_error = result.get('error', 'Failed to extract text from resume.')
+
+    resume.save(update_fields=['parsed_data', 'is_parsed', 'parse_status', 'parse_error', 'parsed_at'])
+    return resume.parsed_data
+
+
 # ── Upload ────────────────────────────────────────────────────────────────────
 
 class ResumeUploadView(APIView):
     """
     POST /api/resumes/upload
-    Upload a resume file. Triggers async parsing in a background thread.
+    Upload a resume file. Stored as ready for interview selection.
+    Text and skills extraction happens on-demand when starting an interview.
     """
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
@@ -130,11 +158,7 @@ class ResumeUploadView(APIView):
             parse_status='pending',
         )
 
-        # Kick off background parse
-        t = threading.Thread(target=_run_parse, args=(str(resume.id),), daemon=True)
-        t.start()
-
-        logger.info('Resume uploaded: %s by %s (v%d)', resume.id, request.user.email, next_version)
+        logger.info('Resume uploaded (stored ready for interview): %s by %s (v%d)', resume.id, request.user.email, next_version)
 
         return Response(
             {'success': True, 'data': ResumeListSerializer(resume).data},

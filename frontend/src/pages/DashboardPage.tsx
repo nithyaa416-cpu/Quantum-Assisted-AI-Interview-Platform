@@ -7,6 +7,7 @@ import {
 import { useAuthStore } from '@/store/authStore'
 import { useProfile } from '@/hooks/useProfile'
 import { useSessions, useAssessments } from '@/hooks/useSessions'
+import { useResumes } from '@/hooks/useResumes'
 import { Card, StatCard } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -85,9 +86,9 @@ function QuickActions() {
           },
           {
             icon: <Target className="h-5 w-5" />,
-            title: 'Set Target Role',
-            desc: 'Configure your placement goal',
-            to: '/profile',
+            title: 'Practice with JD',
+            desc: 'Paste a Job Description & start an interview',
+            to: '/interview/new',
             primary: false,
           },
         ].map((action) => (
@@ -240,8 +241,10 @@ export default function DashboardPage() {
   const { data: profile } = useProfile()
   const { data: sessions = [], isLoading: sessLoading } = useSessions()
   const { data: assessments = [], isLoading: assLoading } = useAssessments()
+  const { data: resumes = [] } = useResumes()
 
   const completedSessions = sessions.filter((s) => s.status === 'completed').length
+  const totalQuestions = sessions.reduce((acc, s) => acc + (s.answered_count || 0), 0)
   const avgScore = assessments.length
     ? Math.round(assessments.reduce((acc, a) => acc + Number(a.overall_score), 0) / assessments.length * 100)
     : null
@@ -290,16 +293,16 @@ export default function DashboardPage() {
           trend={avgScore !== null ? (avgScore >= 70 ? 'up' : 'down') : 'neutral'}
         />
         <StatCard
-          label="Skills"
-          value={profile?.skills.length ?? 0}
-          sub="Extracted from resume"
-          icon={<CheckCircle2 className="h-5 w-5" />}
+          label="Resumes"
+          value={resumes.length}
+          sub={resumes.length > 0 ? `${resumes.length} uploaded & ready` : 'Upload a resume'}
+          icon={<FileText className="h-5 w-5" />}
         />
         <StatCard
-          label="Target Roles"
-          value={profile?.target_roles.length ?? 0}
-          sub="Configured in profile"
-          icon={<Target className="h-5 w-5" />}
+          label="Questions"
+          value={totalQuestions}
+          sub="Answered in practice"
+          icon={<CheckCircle2 className="h-5 w-5" />}
         />
       </div>
 

@@ -19,7 +19,12 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 
+from django.contrib.auth import get_user_model
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError as DjangoValidationError
+
 from .models import StudentProfile
+from .otp_service import send_otp_email
 from .serializers import (
     RegisterSerializer,
     LoginSerializer,
@@ -28,7 +33,82 @@ from .serializers import (
     get_tokens_for_user,
 )
 
+User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+class SendOTPView(APIView):
+    """
+    POST /api/auth/send-otp
+    Sends a 6-digit verification code to the specified email for registration.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email', '').strip().lower()
+
+        if not email:
+            return Response(
+                {
+                    'success': False,
+                    'error': {
+                        'code': 'VALIDATION_ERROR',
+                        'message': 'Email address is required.',
+                        'details': {'email': ['Email address is required.']},
+                    },
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            validate_email(email)
+        except DjangoValidationError:
+            return Response(
+                {
+                    'success': False,
+                    'error': {
+                        'code': 'VALIDATION_ERROR',
+                        'message': 'Enter a valid email address.',
+                        'details': {'email': ['Enter a valid email address.']},
+                    },
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if User.objects.filter(email=email).exists():
+            return Response(
+                {
+                    'success': False,
+                    'error': {
+                        'code': 'EMAIL_EXISTS',
+                        'message': 'An account with this email already exists.',
+                        'details': {'email': ['An account with this email already exists.']},
+                    },
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        success, message = send_otp_email(email)
+        if not success:
+            return Response(
+                {
+                    'success': False,
+                    'error': {
+                        'code': 'SEND_OTP_FAILED',
+                        'message': message,
+                        'details': {},
+                    },
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                'success': True,
+                'data': {'message': message},
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class RegisterView(APIView):
@@ -36,6 +116,7 @@ class RegisterView(APIView):
     POST /api/auth/register
     Open endpoint. Creates a user + student profile and returns JWT tokens.
     """
+
     permission_classes = [AllowAny]
 
     @transaction.atomic

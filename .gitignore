@@ -11,6 +11,7 @@ frontend/dist/
 frontend/tsconfig.tsbuildinfo
 .env
 .env.*
+!.env.example
 .vscode/
 .idea
 *.log

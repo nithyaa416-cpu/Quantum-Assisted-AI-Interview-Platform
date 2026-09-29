@@ -2,10 +2,16 @@ import api from './api'
 import type { AuthResponse, LoginFormData, RegisterFormData, User } from '@/types'
 
 export const authService = {
+  async sendOtp(email: string): Promise<string> {
+    const res = await api.post('/api/auth/send-otp', { email })
+    return res.data.data.message as string
+  },
+
   async register(data: RegisterFormData): Promise<AuthResponse> {
     const res = await api.post('/api/auth/register', data)
     return res.data.data as AuthResponse
   },
+
 
   async login(data: LoginFormData): Promise<AuthResponse> {
     const res = await api.post('/api/auth/login', data)

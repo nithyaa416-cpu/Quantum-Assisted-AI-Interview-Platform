@@ -129,3 +129,35 @@ def create_student_profile(sender, instance, created, **kwargs):
     if created:
         StudentProfile.objects.create(user=instance)
         logger.info('StudentProfile created for user: %s', instance.email)
+
+
+class EmailVerificationOTP(models.Model):
+    """
+    Stores 6-digit OTP codes for email verification during registration.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    email = models.EmailField(db_index=True)
+    otp_code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_verified = models.BooleanField(default=False)
+    attempts = models.IntegerField(default=0)
+
+    class Meta:
+        db_table = 'accounts_email_otp'
+        verbose_name = 'Email Verification OTP'
+        verbose_name_plural = 'Email Verification OTPs'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'OTP for {self.email} ({self.otp_code})'
+
+    def is_expired(self, expiry_minutes: int = 10) -> bool:
+        from django.utils import timezone
+        from datetime import timedelta
+        return timezone.now() > self.created_at + timedelta(minutes=expiry_minutes)
+
+    def can_resend(self, cooldown_seconds: int = 60) -> bool:
+        from django.utils import timezone
+        from datetime import timedelta
+        return timezone.now() >= self.created_at + timedelta(seconds=cooldown_seconds)
+

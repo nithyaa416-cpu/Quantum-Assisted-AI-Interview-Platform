@@ -26,3 +26,8 @@ LOGGING['loggers']['django.db.backends'] = {  # noqa: F405
     'level': 'INFO',
     'propagate': False,
 }
+
+# If no SMTP credentials are configured, print emails to the terminal in dev mode
+if not config('EMAIL_HOST_USER', default=''):
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+

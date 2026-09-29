@@ -19,7 +19,8 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.resumes.models import TargetRole
+from apps.resumes.models import TargetRole, Resume
+from apps.resumes.views import parse_resume_now
 from .models import InterviewSession, InterviewQuestion, StudentResponse
 from .interview_engine import (
     AdaptiveInterviewEngine,
@@ -165,6 +166,29 @@ def _phase_progress(session: InterviewSession) -> dict:
 
 # ── Views ─────────────────────────────────────────────────────────────────────
 
+def _infer_domain(role_title: str) -> str:
+    title = role_title.lower()
+    if any(k in title for k in ['frontend', 'react', 'vue', 'angular', 'ui', 'web design']):
+        return 'frontend'
+    if any(k in title for k in ['data science', 'analytics', 'data analyst', 'business intelligence']):
+        return 'data_science'
+    if any(k in title for k in ['machine learning', 'ml', 'deep learning', 'nlp', 'computer vision', 'ai']):
+        return 'machine_learning'
+    if any(k in title for k in ['devops', 'cloud', 'aws', 'azure', 'docker', 'kubernetes', 'sre', 'infrastructure']):
+        return 'devops'
+    if any(k in title for k in ['backend', 'django', 'fastapi', 'node', 'express', 'spring', 'go', 'golang', 'java', 'c++']):
+        return 'backend'
+    if any(k in title for k in ['full stack', 'fullstack', 'full-stack', 'mern', 'mean']):
+        return 'fullstack'
+    if any(k in title for k in ['mobile', 'android', 'ios', 'flutter', 'react native']):
+        return 'mobile'
+    if any(k in title for k in ['security', 'cyber', 'pentest']):
+        return 'cybersecurity'
+    if any(k in title for k in ['product', 'scrum', 'agile']):
+        return 'product_management'
+    return 'software_engineering'
+
+
 class InterviewSessionListCreateView(APIView):
     """
     GET  /api/interview/sessions/  - List sessions
@@ -205,6 +229,8 @@ class InterviewSessionListCreateView(APIView):
         session_type = data.get('session_type', 'mixed')
         difficulty   = data.get('difficulty', 'intermediate')
         target_role_id = data.get('target_role_id')
+        target_role_name = (data.get('target_role_name') or '').strip()
+        job_description = (data.get('job_description') or '').strip()
 
         if session_type not in dict(InterviewSession.SESSION_TYPE_CHOICES):
             return _err('VALIDATION_ERROR', f'Invalid session_type: {session_type}')
@@ -217,9 +243,36 @@ class InterviewSessionListCreateView(APIView):
                 target_role = TargetRole.objects.get(pk=target_role_id, student=profile)
             except TargetRole.DoesNotExist:
                 return _err('NOT_FOUND', 'Target role not found.')
+        elif target_role_name:
+            domain = _infer_domain(target_role_name)
+            target_role, _ = TargetRole.objects.get_or_create(
+                student=profile,
+                role_name=target_role_name,
+                defaults={'domain': domain, 'is_primary': False}
+            )
         else:
             # Auto-use primary role
             target_role = TargetRole.objects.filter(student=profile, is_primary=True).first()
+
+        resume_id = data.get('resume_id')
+        extracted_resume_data = None
+        if resume_id:
+            try:
+                selected_resume = Resume.objects.get(pk=resume_id, student=profile)
+                extracted_resume_data = parse_resume_now(selected_resume)
+                logger.info(
+                    'Just-in-time resume parsed for interview: resume=%s skills=%d projects=%d',
+                    selected_resume.id,
+                    len(extracted_resume_data.get('skills', [])),
+                    len(extracted_resume_data.get('projects', []))
+                )
+            except Resume.DoesNotExist:
+                logger.warning('Resume %s not found for student %s', resume_id, profile.id)
+
+        session_notes = job_description
+        if extracted_resume_data and extracted_resume_data.get('skills'):
+            top_skills = ', '.join(s['name'] for s in extracted_resume_data.get('skills', [])[:8])
+            session_notes = f"{job_description}\n[Resume Skills: {top_skills}]" if job_description else f"[Resume Skills: {top_skills}]"
 
         # Create session
         session = InterviewSession.objects.create(
@@ -227,6 +280,7 @@ class InterviewSessionListCreateView(APIView):
             session_type=session_type,
             difficulty=difficulty,
             target_role=target_role,
+            notes=session_notes,
             status='active',
             started_at=timezone.now(),
         )

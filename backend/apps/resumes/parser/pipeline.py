@@ -2,11 +2,13 @@
 Main resume parsing pipeline.
 Orchestrates: PDF extraction → section detection → per-section extraction → structured output.
 """
+import os
 import logging
 import time
 from typing import Any
 
 from .pdf_extractor import extract_text_from_pdf, extract_text_from_bytes
+from .docx_extractor import extract_text_from_docx, extract_text_from_doc
 from .section_detector import split_into_sections
 from .extractors import (
     extract_contact,
@@ -24,6 +26,7 @@ logger = logging.getLogger(__name__)
 def parse_resume_file(file_path: str) -> dict[str, Any]:
     """
     Full pipeline: file path → structured parsed data dict.
+    Supports PDF (.pdf), modern Word (.docx), legacy Word (.doc), and text (.txt).
     Safe — never raises; on failure returns a partial/empty result with error info.
     """
     start = time.time()
@@ -43,10 +46,29 @@ def parse_resume_file(file_path: str) -> dict[str, Any]:
     }
 
     try:
-        # Step 1: Extract raw text
-        raw_text = extract_text_from_pdf(file_path)
+        # Step 1: Extract raw text based on file extension
+        ext = os.path.splitext(file_path)[1].lower()
+
+        if ext == '.docx':
+            raw_text = extract_text_from_docx(file_path)
+        elif ext == '.doc':
+            raw_text = extract_text_from_doc(file_path)
+        elif ext == '.txt':
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    raw_text = f.read()
+            except Exception:
+                raw_text = ""
+        else:
+            # Default to PDF
+            raw_text = extract_text_from_pdf(file_path)
+            # If PDF extraction failed and file isn't explicitly .pdf, attempt DOCX
+            if not raw_text.strip() and ext != '.pdf':
+                raw_text = extract_text_from_docx(file_path)
+
         if not raw_text.strip():
-            result["error"] = "Could not extract text from PDF. The file may be image-based or corrupted."
+            fmt = ext.replace('.', '').upper() if ext else 'file'
+            result["error"] = f"Could not extract text from {fmt}. The file may be image-based, empty, or corrupted."
             return result
 
         result["raw_text"] = raw_text
