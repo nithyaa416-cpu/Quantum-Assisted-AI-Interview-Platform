@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { clsx } from 'clsx'
 import {
   LayoutDashboard, User, FileText, Brain,
-  LogOut, Zap, ChevronRight, Target, MessageSquare, History,
+  LogOut, Zap, ChevronRight, Target, MessageSquare, History, Code2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
@@ -11,6 +11,7 @@ import { authService } from '@/services/authService'
 const nav = [
   { to: '/dashboard',     icon: LayoutDashboard, label: 'Dashboard'    },
   { to: '/interview/new', icon: MessageSquare,   label: 'Interview'    },
+  { to: '/coding-practice', icon: Code2, label: 'Coding Practice' },
   { to: '/sessions',      icon: History,         label: 'Sessions'     },
   { to: '/profile',       icon: User,            label: 'My Profile'   },
   { to: '/resumes',       icon: FileText,        label: 'Resumes'      },

@@ -215,6 +215,28 @@ DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='QAIP Platform <norepl
 
 
 # ---------------------------------------------------------------------------
+# Judge0 — Code Execution Engine
+# ---------------------------------------------------------------------------
+JUDGE0_API_URL = config('JUDGE0_API_URL', default='http://localhost:2358')
+JUDGE0_API_KEY = config('JUDGE0_API_KEY', default='')   # Leave blank for local CE deployment
+
+# Centralised Judge0 language ID map.
+# Change these values when using a different Judge0 CE installation
+# without hunting through the codebase.
+# Python 3.8=71, Java=62, C++ (GCC 9.2)=54  are typical CE defaults.
+JUDGE0_LANGUAGE_IDS: dict = {
+    'python': config('JUDGE0_LANG_PYTHON', default=71, cast=int),
+    'java':   config('JUDGE0_LANG_JAVA',   default=62, cast=int),
+    'cpp':    config('JUDGE0_LANG_CPP',    default=54, cast=int),
+}
+
+# Maximum source code size accepted by the API (bytes)
+JUDGE0_MAX_SOURCE_SIZE = 100_000   # 100 KB
+
+# Submission timeout in seconds (used for Judge0 polling wait)
+JUDGE0_TIMEOUT_SECONDS = 15
+
+# ---------------------------------------------------------------------------
 # Celery
 # ---------------------------------------------------------------------------
 CELERY_BROKER_URL = config('REDIS_URL', default='redis://localhost:6379/0')

@@ -238,10 +238,43 @@ export interface InterviewQuestion {
   topic: string
   difficulty: 'easy' | 'medium' | 'hard'
   turn_number: number
+  question_type?: 'situational' | 'technical' | 'conceptual' | 'coding' | 'behavioural'
   is_follow_up?: boolean
-  follow_up_reason?: 'weak_answer' | 'strong_answer' | null
+  follow_up_reason?: 'weak_answer' | 'strong_answer' | 'coding_result' | null
   answered?: boolean
+  /** Sentinel value returned when interviewer is in the coding phase */
+  is_coding_problem?: boolean
 }
+
+/** Result from submitting code during an interview session */
+export interface InterviewCodingResult {
+  submission_id: string
+  status: string
+  passed: number
+  total: number
+  score: number
+  runtime_ms: number | null
+  memory_kb: number | null
+  results: Array<{
+    test_case_id: string
+    status: string
+    stdout: string
+    stderr: string
+    passed: boolean
+    time_ms: number | null
+    memory_kb: number | null
+    input: string | null
+    expected_output: string | null
+  }>
+  follow_up_question: {
+    id: string
+    text: string
+    phase: string
+    topic: string
+    turn_number: number
+  }
+}
+
 
 export interface InterviewTurn {
   turn_number: number

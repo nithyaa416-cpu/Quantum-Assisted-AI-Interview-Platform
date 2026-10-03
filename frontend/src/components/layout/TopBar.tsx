@@ -1,5 +1,6 @@
 import { Bell, Menu } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
 
 interface TopBarProps {
   onToggleSidebar: () => void
@@ -31,6 +32,7 @@ export function TopBar({ onToggleSidebar, title }: TopBarProps) {
 
       {/* Right */}
       <div className="flex items-center gap-3">
+        <ThemeToggle />
         <button className="p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-surface-hover transition-colors relative">
           <Bell className="h-5 w-5" />
         </button>

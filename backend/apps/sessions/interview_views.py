@@ -49,7 +49,13 @@ def _build_context(session: InterviewSession) -> SessionContext:
     responses = {r.question_id: r for r in session.responses.all()}
 
     asked_texts = {q.question_text for q in questions}
-    current_phase = questions[-1].phase if questions else 'warmup'
+    # For coding sessions with no questions yet, start in 'coding' phase not 'warmup'
+    if questions:
+        current_phase = questions[-1].phase
+    elif session.session_type == 'coding':
+        current_phase = 'coding'
+    else:
+        current_phase = 'warmup'
 
     # Count questions in current phase
     questions_in_phase = sum(1 for q in questions if q.phase == current_phase)
@@ -589,7 +595,311 @@ class EndInterviewView(APIView):
         })
 
 
+# ── Interview Coding Endpoints ────────────────────────────────────────────────
+
+class InterviewCodingProblemView(APIView):
+    """
+    GET /api/interview/sessions/{id}/coding-problem/
+    Returns the coding problem assigned to the current coding-phase question.
+    If no problem is assigned yet, selects one adaptively from the problem bank.
+
+    POST /api/interview/sessions/{id}/coding-problem/
+    Body: { question_id } — explicitly assigns a problem to a coding question.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            session = InterviewSession.objects.get(pk=pk, student__user=request.user)
+        except InterviewSession.DoesNotExist:
+            return _err('NOT_FOUND', 'Session not found.', 404)
+
+        # Find the current unanswered coding-phase question
+        last_q = session.questions.filter(phase='coding').order_by('-turn_number').first()
+        if not last_q:
+            return _err('NOT_FOUND', 'No coding question found in this session.')
+
+        # Check if a problem is already linked via metadata
+        from apps.assessments.models import CodingProblem, CodingSubmission
+        from apps.assessments.coding_serializers import CodingProblemDetailSerializer
+
+        # Find an existing submission for this question
+        existing_submission = CodingSubmission.objects.filter(
+            session=session,
+            attempt_type='interview',
+        ).order_by('-submitted_at').first()
+
+        if existing_submission and existing_submission.problem:
+            problem = existing_submission.problem
+        else:
+            # Select a problem adaptively
+            problem = _select_interview_problem(session, last_q.difficulty_level)
+            if not problem:
+                return _err('NOT_FOUND', 'No suitable coding problem found.', 404)
+
+        serializer_data = CodingProblemDetailSerializer(problem).data
+        return _ok({
+            'question_id': str(last_q.id),
+            'problem': serializer_data,
+        })
+
+    def post(self, request, pk):
+        """Explicitly select and return a coding problem for the current turn."""
+        try:
+            session = InterviewSession.objects.get(pk=pk, student__user=request.user)
+        except InterviewSession.DoesNotExist:
+            return _err('NOT_FOUND', 'Session not found.', 404)
+
+        from apps.assessments.models import CodingProblem
+        from apps.assessments.coding_serializers import CodingProblemDetailSerializer
+
+        # Get the current coding question
+        last_q = session.questions.filter(
+            phase='coding', question_type='coding'
+        ).order_by('-turn_number').first()
+
+        if not last_q:
+            return _err('NOT_FOUND', 'No active coding question in session.')
+
+        difficulty = request.data.get('difficulty', last_q.difficulty_level)
+        problem = _select_interview_problem(session, difficulty)
+        if not problem:
+            return _err('NOT_FOUND', 'No suitable coding problem available.')
+
+        serializer_data = CodingProblemDetailSerializer(problem).data
+        return _ok({
+            'question_id': str(last_q.id),
+            'problem': serializer_data,
+        })
+
+
+def _select_interview_problem(session: InterviewSession, difficulty: str):
+    """
+    Adaptively select a coding problem for the interview session.
+    Avoids problems the student already solved in this session.
+    Matches difficulty to the session difficulty level.
+    """
+    from apps.assessments.models import CodingProblem, CodingSubmission
+
+    # Map difficulty label
+    diff_map = {'easy': 'easy', 'medium': 'medium', 'hard': 'hard',
+                'beginner': 'easy', 'intermediate': 'medium', 'advanced': 'hard'}
+    problem_diff = diff_map.get(difficulty, 'medium')
+
+    # Get problems already used in this session
+    used_problem_ids = set(
+        CodingSubmission.objects.filter(
+            session=session, attempt_type='interview', problem__isnull=False
+        ).values_list('problem_id', flat=True)
+    )
+
+    # Build queryset: correct difficulty, active, not yet used in this session
+    qs = CodingProblem.objects.filter(
+        is_active=True, difficulty=problem_diff
+    ).exclude(id__in=used_problem_ids)
+
+    # Try to match topics if target role has coding topics
+    if not qs.exists():
+        # Fallback: any difficulty, not yet used
+        qs = CodingProblem.objects.filter(is_active=True).exclude(id__in=used_problem_ids)
+
+    if not qs.exists():
+        # Final fallback: any problem at all
+        qs = CodingProblem.objects.filter(is_active=True)
+
+    import random as _random
+    problems = list(qs)
+    return _random.choice(problems) if problems else None
+
+
+class InterviewCodingSubmitView(APIView):
+    """
+    POST /api/interview/sessions/{id}/coding-submit/
+    Submit code during an interview session.
+    - Runs code against ALL test cases via Judge0
+    - Saves as CodingSubmission(attempt_type='interview')
+    - Returns result + generates a verbal follow-up question for the interviewer
+
+    Body: { question_id, problem_id, language, source_code }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            session = InterviewSession.objects.get(pk=pk, student__user=request.user)
+        except InterviewSession.DoesNotExist:
+            return _err('NOT_FOUND', 'Session not found.', 404)
+
+        if session.status != 'active':
+            return _err('BAD_REQUEST', f'Session is {session.status}, not active.')
+
+        question_id = request.data.get('question_id', '').strip()
+        problem_id  = request.data.get('problem_id', '').strip()
+        language    = request.data.get('language', '').strip().lower()
+        source_code = request.data.get('source_code', '')
+
+        if not question_id or not problem_id:
+            return _err('VALIDATION_ERROR', 'question_id and problem_id are required.')
+        if not source_code or not source_code.strip():
+            return _err('EMPTY_CODE', 'Source code cannot be empty.')
+
+        from apps.assessments.models import CodingProblem, CodingTestCase, CodingSubmission
+        from apps.assessments.services.code_runner import run_test_cases
+        from apps.assessments.services.judge0_client import get_language_id, Judge0Error
+
+        # Validate language
+        try:
+            get_language_id(language)
+        except ValueError as exc:
+            return _err('INVALID_LANGUAGE', str(exc))
+
+        # Validate question belongs to session
+        try:
+            question = InterviewQuestion.objects.get(pk=question_id, session=session)
+        except InterviewQuestion.DoesNotExist:
+            return _err('NOT_FOUND', 'Question not found.')
+
+        # Fetch problem
+        try:
+            problem = CodingProblem.objects.get(pk=problem_id, is_active=True)
+        except CodingProblem.DoesNotExist:
+            return _err('NOT_FOUND', 'Problem not found.')
+
+        # Run against ALL test cases
+        all_tcs = CodingTestCase.objects.filter(problem=problem).order_by('order')
+        if not all_tcs.exists():
+            return _err('NO_TEST_CASES', 'No test cases configured for this problem.')
+
+        test_cases = [
+            {'id': str(tc.id), 'input': tc.input_data, 'expected_output': tc.expected_output}
+            for tc in all_tcs
+        ]
+
+        try:
+            run_result = run_test_cases(
+                source_code=source_code,
+                language=language,
+                test_cases=test_cases,
+                time_limit=problem.time_limit_seconds,
+                memory_limit_mb=problem.memory_limit_mb,
+            )
+        except Judge0Error as exc:
+            logger.error('Judge0 unavailable during interview submit: %s', exc)
+            return _err('EXECUTION_ENGINE_UNAVAILABLE',
+                        'Code execution engine temporarily unavailable.', 503)
+
+        # Build safe results (strip hidden test data)
+        import uuid as _uuid
+        safe_results = []
+        for r in run_result['results']:
+            tc_id = r['test_case_id']
+            tc_obj = None
+            try:
+                _uuid.UUID(str(tc_id))
+                tc_obj = all_tcs.filter(pk=tc_id).first()
+            except (ValueError, AttributeError):
+                pass
+            safe_results.append({
+                'test_case_id': tc_id,
+                'status': r['status'],
+                'stdout': r['stdout'],
+                'stderr': r['stderr'],
+                'time_ms': r['time_ms'],
+                'memory_kb': r['memory_kb'],
+                'passed': r['passed'],
+                'input': tc_obj.input_data if tc_obj and not tc_obj.is_hidden else None,
+                'expected_output': tc_obj.expected_output if tc_obj and not tc_obj.is_hidden else None,
+            })
+
+        total  = run_result['total']
+        passed = run_result['passed']
+        corr_score = round(passed / total, 2) if total > 0 else 0.0
+
+        # Save as interview submission
+        submission = CodingSubmission.objects.create(
+            session=session,
+            problem=problem,
+            attempt_type='interview',
+            problem_title=problem.title,
+            problem_statement=problem.description,
+            language=language,
+            code=source_code,
+            status=run_result['overall_status'],
+            execution_output='\n'.join(r['stdout'] for r in run_result['results'] if r['stdout']),
+            stderr='\n'.join(r['stderr'] for r in run_result['results'] if r['stderr']),
+            test_results=safe_results,
+            passed_count=passed,
+            total_count=total,
+            runtime_ms=int(run_result['runtime_ms']) if run_result['runtime_ms'] else None,
+            memory_kb=run_result['memory_kb'],
+            timed_out=(run_result['overall_status'] == 'time_limit_exceeded'),
+            correctness_score=corr_score,
+            overall_score=corr_score,
+        )
+
+        # Generate explanation follow-up question based on result
+        if corr_score >= 0.8:
+            follow_up = (
+                f"Excellent! Your solution for '{problem.title}' passed {passed}/{total} test cases. "
+                "Could you explain your approach? What algorithm did you use, and what is the "
+                "time complexity of your solution?"
+            )
+        elif corr_score >= 0.4:
+            follow_up = (
+                f"Your solution passed {passed}/{total} test cases for '{problem.title}'. "
+                "Can you walk me through your approach and identify where your solution might be failing?"
+            )
+        else:
+            follow_up = (
+                f"Your solution passed {passed}/{total} test cases for '{problem.title}'. "
+                "Can you explain your approach and how you would debug or improve it? "
+                "What edge cases did you consider?"
+            )
+
+        # Store the follow-up as a new interview question
+        new_turn = session.questions.count() + 1
+        follow_up_question = InterviewQuestion.objects.create(
+            session=session,
+            turn_number=new_turn,
+            phase='coding',
+            question_text=follow_up,
+            question_type='conceptual',
+            topic='coding_explanation',
+            difficulty_level=question.difficulty_level,
+            expected_concepts=[
+                'algorithm', 'time_complexity', 'space_complexity',
+                'approach', 'edge_cases', 'optimization'
+            ],
+            is_follow_up=True,
+            follow_up_reason='coding_result',
+        )
+
+        logger.info(
+            'Interview coding submit: session=%s problem=%s score=%.2f',
+            session.id, problem.slug, corr_score
+        )
+
+        return _ok({
+            'submission_id': str(submission.id),
+            'status': run_result['overall_status'],
+            'passed': passed,
+            'total': total,
+            'score': corr_score,
+            'runtime_ms': run_result['runtime_ms'],
+            'memory_kb': run_result['memory_kb'],
+            'results': safe_results,
+            'follow_up_question': {
+                'id': str(follow_up_question.id),
+                'text': follow_up_question.question_text,
+                'phase': 'coding',
+                'topic': 'coding_explanation',
+                'turn_number': follow_up_question.turn_number,
+            },
+        }, 201)
+
+
 # ── Audio / Speech AI Endpoints ───────────────────────────────────────────────
+
 
 from django.http import HttpResponse
 from rest_framework.parsers import MultiPartParser, FormParser

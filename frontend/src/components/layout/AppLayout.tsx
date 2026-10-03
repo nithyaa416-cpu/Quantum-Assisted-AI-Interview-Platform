@@ -13,6 +13,7 @@ const pageTitles: Record<string, string> = {
   '/target-roles':  'Target Roles',
   '/preparation':   'Preparation Plan',
   '/interview/new': 'Start Interview',
+  '/coding':        'Coding Interview',
 }
 
 export function AppLayout() {

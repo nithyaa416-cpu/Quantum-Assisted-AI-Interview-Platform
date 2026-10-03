@@ -1,12 +1,89 @@
 """
-Assessment models: CodingSubmission, Assessment, SkillGap.
-
-All scores are individual — no cross-student comparisons exist here.
+Assessment models: CodingSubmission, Assessment, SkillGap,
+                   CodingProblem, CodingTestCase.
 """
 import uuid
 from django.db import models
 from apps.accounts.models import StudentProfile
 from apps.sessions.models import InterviewSession
+
+
+class CodingProblem(models.Model):
+    """
+    A coding interview problem.
+    Starter code is stored per-language so Monaco can load the right template.
+    Test cases are related via CodingTestCase — some are visible, some are hidden.
+    Hidden expected outputs are NEVER returned through the frontend API.
+    """
+    DIFFICULTY_CHOICES = [
+        ('easy',   'Easy'),
+        ('medium', 'Medium'),
+        ('hard',   'Hard'),
+    ]
+
+    id           = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title        = models.CharField(max_length=255)
+    slug         = models.SlugField(max_length=255, unique=True)
+    description  = models.TextField()
+    difficulty   = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES, default='easy')
+    input_format  = models.TextField(blank=True)
+    output_format = models.TextField(blank=True)
+    constraints  = models.JSONField(default=list, blank=True)   # ["1 ≤ n ≤ 10^4", ...]
+    examples     = models.JSONField(default=list, blank=True)   # [{input, output, explanation}, ...]
+    # Per-language starter code: {"python": "...", "java": "...", "cpp": "..."}
+    starter_code = models.JSONField(default=dict)
+    time_limit_seconds  = models.FloatField(default=2.0)
+    memory_limit_mb     = models.IntegerField(default=256)
+    # Topic tags for adaptive selection and weakness detection
+    # e.g. ["arrays", "hashing", "two_pointers"]
+    topics              = models.JSONField(default=list, blank=True)
+    # Required prerequisite skills: ["python", "data_structures"]
+    required_skills     = models.JSONField(default=list, blank=True)
+    # Expected solution complexity: {"time": "O(n)", "space": "O(1)"}
+    expected_complexity = models.JSONField(default=dict, blank=True)
+    is_active    = models.BooleanField(default=True)
+    created_at   = models.DateTimeField(auto_now_add=True)
+    updated_at   = models.DateTimeField(auto_now=True)
+
+
+    class Meta:
+        db_table    = 'assessments_coding_problem'
+        verbose_name        = 'Coding Problem'
+        verbose_name_plural = 'Coding Problems'
+        ordering = ['difficulty', 'title']
+
+    def __str__(self):
+        return f'[{self.difficulty.upper()}] {self.title}'
+
+
+class CodingTestCase(models.Model):
+    """
+    A single test case for a CodingProblem.
+    is_hidden=True  → input/expected_output are NEVER returned to the frontend.
+    is_hidden=False → visible sample test cases shown to the student.
+    """
+    id              = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    problem         = models.ForeignKey(
+        CodingProblem,
+        on_delete=models.CASCADE,
+        related_name='test_cases',
+    )
+    input_data      = models.TextField()
+    expected_output = models.TextField()
+    is_hidden       = models.BooleanField(default=False)
+    order           = models.PositiveIntegerField(default=0)
+    created_at      = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table    = 'assessments_coding_test_case'
+        verbose_name        = 'Coding Test Case'
+        verbose_name_plural = 'Coding Test Cases'
+        ordering = ['problem', 'order']
+
+    def __str__(self):
+        vis = 'hidden' if self.is_hidden else 'public'
+        return f'TC#{self.order} ({vis}) — {self.problem.title}'
+
 
 
 class CodingSubmission(models.Model):
@@ -22,32 +99,67 @@ class CodingSubmission(models.Model):
         ('go', 'Go'),
     ]
 
+    STATUS_CHOICES = [
+        ('accepted',             'Accepted'),
+        ('wrong_answer',         'Wrong Answer'),
+        ('compilation_error',    'Compilation Error'),
+        ('runtime_error',        'Runtime Error'),
+        ('time_limit_exceeded',  'Time Limit Exceeded'),
+        ('memory_limit_exceeded','Memory Limit Exceeded'),
+        ('internal_error',       'Internal Error'),
+        ('pending',              'Pending'),
+    ]
+
+    ATTEMPT_TYPE_CHOICES = [
+        ('interview', 'Interview Assessment'),
+        ('practice',  'Coding Practice'),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     session = models.ForeignKey(
         InterviewSession,
         on_delete=models.CASCADE,
-        related_name='coding_submissions'
+        related_name='coding_submissions',
+        null=True, blank=True,    # allow standalone submissions outside a session
     )
-    problem_title = models.CharField(max_length=255)
+    # 'interview' = part of an assessed session, 'practice' = standalone preparation
+    attempt_type = models.CharField(
+        max_length=10,
+        choices=ATTEMPT_TYPE_CHOICES,
+        default='practice',
+    )
+
+    # Optional link to a structured problem from the problem bank
+    problem = models.ForeignKey(
+        CodingProblem,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='submissions',
+    )
+    problem_title     = models.CharField(max_length=255)
     problem_statement = models.TextField()
-    language = models.CharField(max_length=20, choices=LANGUAGE_CHOICES, default='python')
-    code = models.TextField()
-    execution_output = models.TextField(blank=True)
-    stderr = models.TextField(blank=True)
+    language          = models.CharField(max_length=20, choices=LANGUAGE_CHOICES, default='python')
+    code              = models.TextField()
+    status            = models.CharField(
+        max_length=30, choices=STATUS_CHOICES, default='pending', blank=True
+    )
+    execution_output  = models.TextField(blank=True)
+    stderr            = models.TextField(blank=True)
     # List of {test_id, input, expected_output, actual_output, passed}
+    # Hidden test input/output are stripped before storing when needed
     test_results = models.JSONField(default=list, blank=True)
     passed_count = models.IntegerField(default=0)
-    total_count = models.IntegerField(default=0)
-    runtime_ms = models.IntegerField(null=True, blank=True)
-    memory_kb = models.IntegerField(null=True, blank=True)
-    timed_out = models.BooleanField(default=False)
+    total_count  = models.IntegerField(default=0)
+    runtime_ms   = models.IntegerField(null=True, blank=True)
+    memory_kb    = models.IntegerField(null=True, blank=True)
+    timed_out    = models.BooleanField(default=False)
     # Individual scores 0.00–1.00
     correctness_score = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
-    efficiency_score = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
-    quality_score = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
-    overall_score = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
-    llm_review = models.TextField(blank=True)
-    submitted_at = models.DateTimeField(auto_now_add=True)
+    efficiency_score  = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    quality_score     = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    overall_score     = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True)
+    llm_review        = models.TextField(blank=True)
+    submitted_at      = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = 'assessments_coding_submission'
@@ -56,6 +168,7 @@ class CodingSubmission(models.Model):
         ordering = ['-submitted_at']
         indexes = [
             models.Index(fields=['session']),
+            models.Index(fields=['problem']),
         ]
 
     def __str__(self):
