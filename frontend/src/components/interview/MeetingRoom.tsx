@@ -1,20 +1,23 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   PhoneOff, Maximize2, Minimize2, MessageSquare,
-  Sparkles, ChevronRight, Mic, Clock, Cpu, Volume2
+  Sparkles, ChevronRight, Mic, Clock, Cpu, Volume2, Code2
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
 
 import { MeetingAvatar, AvatarState } from './MeetingAvatar'
 import { CandidateVideoTile } from './CandidateVideoTile'
 import { ProctoringShield } from './ProctoringShield'
 import { SessionTimer } from './InterviewTimer'
+import { InterviewCodingPanel } from './InterviewCodingPanel'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { stopAllMediaStreams, getActiveMediaStream } from '@/utils/mediaStreamManager'
 import { stopAllAudioAndSpeech } from '@/utils/audioSpeechManager'
 import { interviewService } from '@/services/interviewService'
-import type { InterviewSession, InterviewQuestion, SubmitResponseResult } from '@/types'
+import type { InterviewSession, InterviewQuestion, SubmitResponseResult, InterviewCodingResult } from '@/types'
+
 
 interface MeetingRoomProps {
   session: InterviewSession
@@ -41,6 +44,29 @@ export function MeetingRoom({
 }: MeetingRoomProps) {
   const [showCaptions, setShowCaptions] = useState(true)
   const [isFullscreen, setIsFullscreen] = useState(Boolean(document.fullscreenElement))
+
+  // ── Coding phase state ─────────────────────────────────────────────────────
+  // Detect whether the current question is a coding problem
+  const isCodingQuestion = (
+    currentQuestion?.question_type === 'coding' ||
+    currentQuestion?.phase === 'coding' && currentQuestion?.text === '[CODING_PROBLEM]'
+  )
+  const [codingSubmitted, setCodingSubmitted] = useState(false)
+  const [codingFollowUpText, setCodingFollowUpText] = useState<string | null>(null)
+
+  // Reset coding state when question changes
+  useEffect(() => {
+    if (!isCodingQuestion) {
+      setCodingSubmitted(false)
+      setCodingFollowUpText(null)
+    }
+  }, [currentQuestion?.id])  // eslint-disable-line
+
+  const handleCodingSubmitted = (result: InterviewCodingResult) => {
+    setCodingSubmitted(true)
+    setCodingFollowUpText(result.follow_up_question.text)
+    // The follow-up is already stored in DB; parent will pick it up on next question fetch
+  }
 
   // Live Speech-to-Text states (Strictly Read-only, verbal hands-free)
   const [transcript, setTranscript] = useState('')
@@ -78,6 +104,7 @@ export function MeetingRoom({
 
   const clearSilenceTimers = useCallback(() => {
     if (silenceTimerRef.current) {
+
       clearTimeout(silenceTimerRef.current)
       silenceTimerRef.current = null
     }
@@ -464,6 +491,7 @@ export function MeetingRoom({
         </div>
 
         <div className="flex items-center gap-4">
+          <ThemeToggle />
           <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-xs text-slate-300">
             <span className="w-2 h-2 rounded-full bg-brand-400"></span>
             <span className="capitalize">{currentQuestion?.phase || session.current_phase} Phase</span>
@@ -484,110 +512,185 @@ export function MeetingRoom({
         </div>
       </header>
 
-      {/* 3. Main Examination Grid */}
-      <main className="flex-1 p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 min-h-0 relative z-20">
-        {/* Left Tile: AI Examiner Avatar (Speaks Question ONCE via edge-tts) */}
-        <div className="w-full h-full min-h-[300px]">
-          <MeetingAvatar
-            questionId={qId}
-            questionText={qText}
-            avatarState={avatarState}
-            onSpeechEnd={handleAISpeechEnd}
-            showCaptions={showCaptions}
-          />
-        </div>
+      {/* 3. Main Examination Area */}
+      <main className="flex-1 p-4 sm:p-6 flex flex-col gap-4 min-h-0 relative z-20 overflow-hidden">
 
-        {/* Right Tile: Candidate Compulsory Video & Hands-Free Verbal Transcript */}
-        <div className="w-full h-full flex flex-col gap-4 min-h-[300px]">
-          {/* Candidate Webcam (Compulsory: NO user mute / NO camera off) */}
-          <div className="flex-1 min-h-[220px]">
-            <CandidateVideoTile
-              candidateName={candidateName}
-              onStreamReady={(stream) => {
-                mediaStreamRef.current = stream
-              }}
+        {/* ── CODING PHASE: Full-width editor panel ──────────────────────── */}
+        {isCodingQuestion && !codingSubmitted && (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <InterviewCodingPanel
+              sessionId={session.id}
+              questionId={currentQuestion!.id}
+              onSubmitted={handleCodingSubmitted}
+              onSkip={onContinueNext}
             />
           </div>
+        )}
 
-          {/* Real-time Voice Answer Transcription Box (Read-Only: candidate speaks hands-free) */}
-          <div className="h-52 rounded-2xl bg-slate-900/90 border border-slate-800 p-4 flex flex-col shadow-xl backdrop-blur-md">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  {isListening && (
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  )}
-                  <span
-                    className={`relative inline-flex rounded-full h-2 w-2 ${
-                      isListening ? 'bg-emerald-500' : 'bg-slate-500'
-                    }`}
-                  />
-                </span>
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                  {isListening ? 'Listening & Transcribing Voice Live…' : (avatarState === 'speaking' ? 'AI Examiner Speaking…' : 'AI Evaluating Answer…')}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
-                {isWhisperProcessing && (
-                  <span className="text-brand-400 flex items-center gap-1 font-semibold">
-                    <Cpu className="h-3 w-3 animate-spin" /> Whisper STT Refinement
+        {/* ── CODING PHASE: After submission — show follow-up + verbal answer ── */}
+        {isCodingQuestion && codingSubmitted && (
+          <div className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
+            {/* Follow-up question display */}
+            <div className="flex-1 min-h-[300px]">
+              <div className="h-full flex flex-col rounded-2xl bg-slate-900/90 border border-orange-500/30 p-5 shadow-xl">
+                <div className="flex items-center gap-2 mb-3">
+                  <Code2 className="h-4 w-4 text-orange-400" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-orange-400">
+                    Coding Explanation
                   </span>
-                )}
-                <span>{fullLiveText ? fullLiveText.split(/\s+/).filter(Boolean).length : 0} words</span>
-                <span className="text-slate-600">&bull;</span>
-                <span className="text-emerald-400 font-medium">Hands-Free</span>
-              </div>
-            </div>
-
-            {/* Read-Only Transcript Display */}
-            <div className="flex-1 overflow-y-auto py-2.5 text-xs sm:text-sm text-slate-200">
-              {fullLiveText ? (
-                <p className="leading-relaxed">
-                  <span className="text-slate-100">{transcript}</span>
-                  {interimTranscript && (
-                    <span className="text-brand-300 italic opacity-85"> {interimTranscript}</span>
-                  )}
+                </div>
+                <p className="text-sm text-slate-200 leading-relaxed flex-1">
+                  {codingFollowUpText || 'Please explain your approach and the time/space complexity of your solution.'}
                 </p>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-500 text-center gap-1.5">
-                  <Mic className="h-5 w-5 text-slate-600 animate-pulse" />
-                  <p className="text-xs">
-                    {isListening
-                      ? 'Speak your answer clearly. You can pause to think at any time without interruption.'
-                      : 'The microphone will automatically start listening the moment the examiner finishes reading.'}
-                  </p>
-                </div>
-              )}
+                <p className="text-xs text-slate-500 mt-4">
+                  Answer verbally — the microphone is listening.
+                </p>
+              </div>
             </div>
 
-            {/* Hands-Free Live Status Bar (NO SUBMIT BUTTON REQUIRED) */}
-            <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
-              {isSubmitting || isWhisperProcessing ? (
-                <div className="flex items-center gap-2 text-xs text-brand-400">
-                  <Spinner size="sm" />
-                  <span>AI is evaluating your answer and generating the next question…</span>
-                </div>
-              ) : silenceCountdown !== null ? (
-                <div className="flex items-center gap-2 text-xs text-amber-300 animate-pulse">
-                  <Clock className="h-3.5 w-3.5" />
-                  <span>
-                    Answer complete pause detected &bull; Auto-submitting in <strong>{silenceCountdown}s</strong> (keep speaking to continue answering)...
+            {/* Right: webcam + verbal transcript */}
+            <div className="w-full lg:w-[360px] flex flex-col gap-4 flex-shrink-0">
+              <div className="flex-1 min-h-[180px]">
+                <CandidateVideoTile
+                  candidateName={candidateName}
+                  onStreamReady={(stream) => { mediaStreamRef.current = stream }}
+                />
+              </div>
+              <div className="h-44 rounded-2xl bg-slate-900/90 border border-slate-800 p-3 flex flex-col">
+                <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+                  <span className={`w-2 h-2 rounded-full ${isListening ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`} />
+                  <span className="text-xs text-slate-400">
+                    {isListening ? 'Listening…' : 'Speak your explanation'}
                   </span>
                 </div>
-              ) : (
-                <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                  <span>Fully hands-free: Speak your answer. The AI automatically senses when you finish.</span>
+                <div className="flex-1 overflow-y-auto py-2 text-xs text-slate-200">
+                  {fullLiveText ? (
+                    <p className="leading-relaxed">
+                      <span>{transcript}</span>
+                      {interimTranscript && <span className="text-brand-300 italic"> {interimTranscript}</span>}
+                    </p>
+                  ) : (
+                    <p className="text-slate-500 text-center mt-4">Explain your solution verbally…</p>
+                  )}
                 </div>
-              )}
-
-              <span className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">
-                Hands-Free AI
-              </span>
+                {(isSubmitting || isWhisperProcessing) && (
+                  <div className="pt-2 border-t border-slate-800 flex items-center gap-2 text-xs text-brand-400">
+                    <Spinner size="sm" />
+                    <span>Evaluating explanation…</span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
+
+        {/* ── STANDARD PHASE: Avatar + webcam + transcript ────────────────── */}
+        {!isCodingQuestion && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 flex-1 min-h-0">
+            {/* Left Tile: AI Examiner Avatar */}
+            <div className="w-full h-full min-h-[300px]">
+              <MeetingAvatar
+                questionId={qId}
+                questionText={qText}
+                avatarState={avatarState}
+                onSpeechEnd={handleAISpeechEnd}
+                showCaptions={showCaptions}
+              />
+            </div>
+
+            {/* Right Tile: Candidate Compulsory Video & Hands-Free Verbal Transcript */}
+            <div className="w-full h-full flex flex-col gap-4 min-h-[300px]">
+              {/* Candidate Webcam (Compulsory: NO user mute / NO camera off) */}
+              <div className="flex-1 min-h-[220px]">
+                <CandidateVideoTile
+                  candidateName={candidateName}
+                  onStreamReady={(stream) => {
+                    mediaStreamRef.current = stream
+                  }}
+                />
+              </div>
+
+              {/* Real-time Voice Answer Transcription Box (Read-Only: candidate speaks hands-free) */}
+              <div className="h-52 rounded-2xl bg-slate-900/90 border border-slate-800 p-4 flex flex-col shadow-xl backdrop-blur-md">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-2 w-2">
+                      {isListening && (
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      )}
+                      <span
+                        className={`relative inline-flex rounded-full h-2 w-2 ${
+                          isListening ? 'bg-emerald-500' : 'bg-slate-500'
+                        }`}
+                      />
+                    </span>
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                      {isListening ? 'Listening & Transcribing Voice Live…' : (avatarState === 'speaking' ? 'AI Examiner Speaking…' : 'AI Evaluating Answer…')}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
+                    {isWhisperProcessing && (
+                      <span className="text-brand-400 flex items-center gap-1 font-semibold">
+                        <Cpu className="h-3 w-3 animate-spin" /> Whisper STT Refinement
+                      </span>
+                    )}
+                    <span>{fullLiveText ? fullLiveText.split(/\s+/).filter(Boolean).length : 0} words</span>
+                    <span className="text-slate-600">&bull;</span>
+                    <span className="text-emerald-400 font-medium">Hands-Free</span>
+                  </div>
+                </div>
+
+                {/* Read-Only Transcript Display */}
+                <div className="flex-1 overflow-y-auto py-2.5 text-xs sm:text-sm text-slate-200">
+                  {fullLiveText ? (
+                    <p className="leading-relaxed">
+                      <span className="text-slate-100">{transcript}</span>
+                      {interimTranscript && (
+                        <span className="text-brand-300 italic opacity-85"> {interimTranscript}</span>
+                      )}
+                    </p>
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-slate-500 text-center gap-1.5">
+                      <Mic className="h-5 w-5 text-slate-600 animate-pulse" />
+                      <p className="text-xs">
+                        {isListening
+                          ? 'Speak your answer clearly. You can pause to think at any time without interruption.'
+                          : 'The microphone will automatically start listening the moment the examiner finishes reading.'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Hands-Free Live Status Bar (NO SUBMIT BUTTON REQUIRED) */}
+                <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
+                  {isSubmitting || isWhisperProcessing ? (
+                    <div className="flex items-center gap-2 text-xs text-brand-400">
+                      <Spinner size="sm" />
+                      <span>AI is evaluating your answer and generating the next question…</span>
+                    </div>
+                  ) : silenceCountdown !== null ? (
+                    <div className="flex items-center gap-2 text-xs text-amber-300 animate-pulse">
+                      <Clock className="h-3.5 w-3.5" />
+                      <span>
+                        Answer complete pause detected &bull; Auto-submitting in <strong>{silenceCountdown}s</strong> (keep speaking to continue answering)...
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                      <span>Fully hands-free: Speak your answer. The AI automatically senses when you finish.</span>
+                    </div>
+                  )}
+
+                  <span className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">
+                    Hands-Free AI
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* 4. Feedback & Hands-Free Auto-Advance Modal */}

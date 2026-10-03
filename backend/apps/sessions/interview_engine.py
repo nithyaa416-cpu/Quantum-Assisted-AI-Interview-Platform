@@ -29,15 +29,22 @@ logger = logging.getLogger(__name__)
 
 # ── Phase configuration ────────────────────────────────────────────────────────
 
-PHASE_SEQUENCE = ['warmup', 'technical', 'project', 'hr', 'closing']
+# Full interview phase order — coding is inserted between technical and project
+PHASE_SEQUENCE = ['warmup', 'technical', 'coding', 'project', 'hr', 'closing']
+
+# For coding-only sessions, only coding + closing
+CODING_ONLY_SEQUENCE = ['coding', 'closing']
 
 PHASE_QUESTION_COUNTS = {
-    'mixed':     {'warmup': 2, 'technical': 5, 'project': 2, 'hr': 3, 'closing': 1},
-    'technical': {'warmup': 1, 'technical': 8, 'project': 2, 'hr': 1, 'closing': 1},
-    'hr':        {'warmup': 1, 'technical': 2, 'project': 1, 'hr': 6, 'closing': 1},
-    'project':   {'warmup': 1, 'technical': 3, 'project': 5, 'hr': 2, 'closing': 1},
-    'coding':    {'warmup': 1, 'technical': 6, 'project': 2, 'hr': 1, 'closing': 1},
+    # Full interview: warmup→technical→coding(1-2 problems)→project→hr→closing
+    'mixed':     {'warmup': 2, 'technical': 4, 'coding': 2, 'project': 2, 'hr': 2, 'closing': 1},
+    'technical': {'warmup': 1, 'technical': 8, 'coding': 0, 'project': 2, 'hr': 1, 'closing': 1},
+    'hr':        {'warmup': 1, 'technical': 2, 'coding': 0, 'project': 1, 'hr': 6, 'closing': 1},
+    'project':   {'warmup': 1, 'technical': 3, 'coding': 0, 'project': 5, 'hr': 2, 'closing': 1},
+    # Coding round: skip warmup, go straight to coding, then closing
+    'coding':    {'warmup': 0, 'technical': 0, 'coding': 4, 'project': 0, 'hr': 0, 'closing': 1},
 }
+
 
 # Answer quality thresholds
 GOOD_ANSWER_THRESHOLD = 0.65    # above this → may increase difficulty or follow up harder
@@ -90,30 +97,49 @@ class AdaptiveInterviewEngine:
         Main decision function. Returns what question to ask next.
         Called after each student response (or at session start).
         """
-        # ── 1. Turn 1 is ALWAYS the welcoming personal introduction ───────────
+        # ── 1. Coding-only sessions skip warmup entirely ───────────────────────
+        if ctx.session_type == 'coding' and ctx.turn_number == 0:
+            return TurnDecision(
+                question_text=(
+                    "Let's begin the coding round. I'll present you with a programming problem. "
+                    "Think through your approach carefully before you start coding. "
+                    "When you're ready, you'll have access to an editor to write and run your solution."
+                ),
+                phase='coding',
+                topic='coding_introduction',
+                difficulty_level=self._map_difficulty(ctx.difficulty),
+                question_type='coding',
+                expected_concepts=['algorithm', 'problem_solving', 'code'],
+                is_follow_up=False,
+                follow_up_reason=None,
+                should_end_interview=False,
+            )
+
+        # ── 2. Turn 1 for non-coding sessions is ALWAYS the welcoming introduction ──
         if ctx.turn_number == 0:
             intro_q = generate_llm_interview_question(
                 candidate_name=ctx.candidate_name,
                 target_role=ctx.target_role_name or ctx.domain,
                 resume_skills=ctx.resume_skills,
                 resume_projects=ctx.resume_projects,
-                current_phase="warmup",
+                current_phase='warmup',
                 turn_number=1,
-                difficulty="easy",
+                difficulty='easy',
+                session_type=ctx.session_type,
             )
             return TurnDecision(
-                question_text=intro_q["question_text"],
-                phase="warmup",
-                topic=intro_q.get("topic", "introduction"),
-                difficulty_level="easy",
-                question_type="situational",
-                expected_concepts=intro_q.get("expected_concepts", ["name", "background", "education", "goals", "skills"]),
+                question_text=intro_q['question_text'],
+                phase='warmup',
+                topic=intro_q.get('topic', 'introduction'),
+                difficulty_level='easy',
+                question_type='situational',
+                expected_concepts=intro_q.get('expected_concepts', ['name', 'background', 'education', 'goals', 'skills']),
                 is_follow_up=False,
                 follow_up_reason=None,
                 should_end_interview=False,
             )
 
-        # ── 2. Check if interview should end ───────────────────────────────────
+        # ── 3. Check if interview should end ───────────────────────────────────
         if self._should_end(ctx):
             closing = self._get_closing(ctx)
             return TurnDecision(
@@ -128,12 +154,32 @@ class AdaptiveInterviewEngine:
                 should_end_interview=False,
             )
 
-        # ── 3. Determine active phase and adaptive difficulty ──────────────────
+        # ── 4. Determine active phase and adaptive difficulty ──────────────────
         next_phase = self._maybe_advance_phase(ctx)
         active_phase = next_phase or ctx.current_phase
         diff = self._adaptive_difficulty(ctx)
 
-        # ── 4. Generate next question dynamically via LLM ──────────────────────
+        # ── 5. Coding phase: signal that a coding problem should be served ─────
+        if active_phase == 'coding':
+            follow_up_reason = None
+            if ctx.last_answer_score is not None:
+                if ctx.last_answer_score >= GOOD_ANSWER_THRESHOLD:
+                    follow_up_reason = 'strong_answer'
+                elif ctx.last_answer_score < WEAK_ANSWER_THRESHOLD:
+                    follow_up_reason = 'weak_answer'
+            return TurnDecision(
+                question_text='[CODING_PROBLEM]',  # sentinel: frontend must request a problem
+                phase='coding',
+                topic='coding',
+                difficulty_level=diff,
+                question_type='coding',
+                expected_concepts=['algorithm', 'data_structure', 'complexity', 'correctness'],
+                is_follow_up=True if ctx.turn_number >= 1 else False,
+                follow_up_reason=follow_up_reason,
+                should_end_interview=False,
+            )
+
+        # ── 6. Generate next question dynamically via LLM ──────────────────────
         llm_q = generate_llm_interview_question(
             candidate_name=ctx.candidate_name,
             target_role=ctx.target_role_name or ctx.domain,
@@ -145,19 +191,22 @@ class AdaptiveInterviewEngine:
             last_question_text=ctx.last_question_text,
             last_answer_text=ctx.last_answer_text,
             last_score=ctx.last_answer_score,
+            session_type=ctx.session_type,
         )
 
         return TurnDecision(
-            question_text=llm_q["question_text"],
+            question_text=llm_q['question_text'],
             phase=active_phase,
-            topic=llm_q.get("topic", active_phase),
+            topic=llm_q.get('topic', active_phase),
             difficulty_level=diff,
-            question_type=llm_q.get("question_type", self._infer_type(active_phase)),
-            expected_concepts=llm_q.get("expected_concepts", []),
+            question_type=llm_q.get('question_type', self._infer_type(active_phase)),
+            expected_concepts=llm_q.get('expected_concepts', []),
             is_follow_up=True if ctx.turn_number >= 1 else False,
-            follow_up_reason="strong_answer" if (ctx.last_answer_score or 0) >= GOOD_ANSWER_THRESHOLD else ("weak_answer" if (ctx.last_answer_score or 0) < WEAK_ANSWER_THRESHOLD else None),
+            follow_up_reason='strong_answer' if (ctx.last_answer_score or 0) >= GOOD_ANSWER_THRESHOLD else ('weak_answer' if (ctx.last_answer_score or 0) < WEAK_ANSWER_THRESHOLD else None),
             should_end_interview=False,
         )
+
+
 
     # ── Private helpers ────────────────────────────────────────────────────────
 
@@ -178,14 +227,34 @@ class AdaptiveInterviewEngine:
         """Return the next phase name if we should advance, else None."""
         limit = self._phase_limit(ctx)
         if ctx.questions_in_phase >= limit:
-            current_idx = PHASE_SEQUENCE.index(ctx.current_phase) if ctx.current_phase in PHASE_SEQUENCE else 0
-            if current_idx < len(PHASE_SEQUENCE) - 1:
-                return PHASE_SEQUENCE[current_idx + 1]
+            # Use the right sequence depending on session type
+            if ctx.session_type == 'coding':
+                seq = CODING_ONLY_SEQUENCE
+            else:
+                seq = PHASE_SEQUENCE
+            current_idx = seq.index(ctx.current_phase) if ctx.current_phase in seq else 0
+            if current_idx < len(seq) - 1:
+                next_p = seq[current_idx + 1]
+                # Skip phases with 0 questions configured
+                counts = PHASE_QUESTION_COUNTS.get(ctx.session_type, PHASE_QUESTION_COUNTS['mixed'])
+                while next_p != seq[-1] and counts.get(next_p, 0) == 0:
+                    current_idx += 1
+                    if current_idx + 1 < len(seq):
+                        next_p = seq[current_idx + 1]
+                    else:
+                        break
+                return next_p
         return None
+
+    def _map_difficulty(self, session_difficulty: str) -> str:
+        """Map session difficulty string to question difficulty string."""
+        return {'beginner': 'easy', 'intermediate': 'medium', 'advanced': 'hard'}.get(
+            session_difficulty, 'medium'
+        )
 
     def _adaptive_difficulty(self, ctx: SessionContext) -> str:
         """Adjust difficulty based on recent performance."""
-        if ctx.session_type == 'technical' or ctx.session_type == 'mixed':
+        if ctx.session_type in ('technical', 'mixed', 'coding'):
             scores = ctx.phase_scores.get(ctx.current_phase, [])
             if len(scores) >= 2:
                 recent_avg = sum(scores[-2:]) / 2
@@ -194,9 +263,7 @@ class AdaptiveInterviewEngine:
                 elif recent_avg < WEAK_ANSWER_THRESHOLD:
                     return self._prev_difficulty(ctx.difficulty)
         # Map session difficulty to question difficulty
-        return {'beginner': 'easy', 'intermediate': 'medium', 'advanced': 'hard'}.get(
-            ctx.difficulty, 'medium'
-        )
+        return self._map_difficulty(ctx.difficulty)
 
     def _next_difficulty(self, current: str) -> str:
         return {'beginner': 'medium', 'easy': 'medium', 'intermediate': 'hard',
@@ -205,6 +272,7 @@ class AdaptiveInterviewEngine:
     def _prev_difficulty(self, current: str) -> str:
         return {'advanced': 'medium', 'hard': 'medium', 'intermediate': 'easy',
                 'medium': 'easy', 'beginner': 'easy', 'easy': 'easy'}.get(current, 'easy')
+
 
     def _pick_question(self, phase: str, ctx: SessionContext) -> Optional[QuestionEntry]:
         """Pick an unasked question from the given phase."""

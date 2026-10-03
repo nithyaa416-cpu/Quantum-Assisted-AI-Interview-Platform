@@ -19,3 +19,6 @@ db.sqlite3
 *.sqlite3
 media/
 backend/media/
+# Judge0 local installation
+judge0-v1.13.1/
+judge0.zip

@@ -13,12 +13,13 @@ import { useResumes } from '@/hooks/useResumes'
 import type { StartInterviewPayload } from '@/types'
 
 const SESSION_TYPES = [
-  { id: 'mixed',     label: 'Full Interview',   desc: 'Warm-up + Technical + Project + HR', emoji: '🎯', recommended: true },
-  { id: 'technical', label: 'Technical Only',   desc: 'DSA, System Design, Concepts',       emoji: '💻' },
-  { id: 'hr',        label: 'HR / Behavioural', desc: 'Soft skills, scenarios, goals',       emoji: '🤝' },
-  { id: 'project',   label: 'Project Focus',    desc: 'Deep dive into your projects',        emoji: '🛠️' },
-  { id: 'coding',    label: 'Coding Round',     desc: 'Algorithm and problem solving',       emoji: '⌨️' },
+  { id: 'mixed',     label: 'Full Interview',   desc: 'Warm-up → Technical → Coding → Project → HR → Closing', emoji: '🎯', recommended: true },
+  { id: 'technical', label: 'Technical Only',   desc: 'DSA, System Design, Concepts',                          emoji: '💻' },
+  { id: 'hr',        label: 'HR / Behavioural', desc: 'Soft skills, scenarios, goals',                         emoji: '🤝' },
+  { id: 'project',   label: 'Project Focus',    desc: 'Deep dive into your projects',                          emoji: '🛠️' },
+  { id: 'coding',    label: 'Coding Round',     desc: 'Coding problems + explanation follow-up (no HR)',       emoji: '⌨️' },
 ] as const
+
 
 const DIFFICULTIES = [
   { id: 'beginner',     label: 'Beginner',     desc: 'Fresher / Entry level',      color: 'text-emerald-400' },

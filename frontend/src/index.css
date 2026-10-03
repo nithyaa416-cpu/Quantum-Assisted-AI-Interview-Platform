@@ -1,16 +1,75 @@
-@tailwind base;
+﻿@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Slate (Dark Theme Defaults - RGB values) */
+  --color-slate-50: 248 250 252;
+  --color-slate-100: 241 245 249;
+  --color-slate-200: 226 232 240;
+  --color-slate-300: 203 213 225;
+  --color-slate-400: 148 163 184;
+  --color-slate-500: 100 116 139;
+  --color-slate-600: 71 85 105;
+  --color-slate-700: 51 65 85;
+  --color-slate-800: 30 41 59;
+  --color-slate-900: 15 23 42;
+  --color-slate-950: 2 6 23;
+
+  /* Brand (Dark Theme Defaults - RGB values) */
+  --color-brand-50: 238 242 255;
+  --color-brand-100: 224 231 255;
+  --color-brand-200: 199 210 254;
+  --color-brand-300: 165 180 252;
+  --color-brand-400: 129 140 248;
+  --color-brand-500: 99 102 241;
+  --color-brand-600: 79 70 229;
+  --color-brand-700: 67 56 202;
+  --color-brand-800: 55 48 163;
+  --color-brand-900: 49 46 129;
+
+  /* Surface (Dark Theme Defaults - RGB values) */
+  --bg-surface: 15 23 42;
+  --bg-surface-card: 30 41 59;
+  --bg-surface-hover: 39 52 73;
+  --bg-surface-border: 51 65 85;
+}
+
+html.light-theme {
+  /* Slate (Inverted for Light Theme - RGB values) */
+  --color-slate-50: 2 6 23;
+  --color-slate-100: 15 23 42;
+  --color-slate-200: 30 41 59;
+  --color-slate-300: 51 65 85;
+  --color-slate-400: 71 85 105;
+  --color-slate-500: 100 116 139;
+  --color-slate-600: 148 163 184;
+  --color-slate-700: 203 213 225;
+  --color-slate-800: 226 232 240;
+  --color-slate-900: 255 255 255;
+  --color-slate-950: 248 250 252;
+
+  /* Brand (Light Theme Adjustments) */
+  --color-brand-200: 79 70 229;
+  --color-brand-300: 67 56 202;
+  --color-brand-400: 55 48 163;
+
+  /* Surface (Light Theme - RGB values) */
+  --bg-surface: 248 250 252;
+  --bg-surface-card: 255 255 255;
+  --bg-surface-hover: 241 245 249;
+  --bg-surface-border: 226 232 240;
+}
+
 @layer base {
   * { box-sizing: border-box; }
-  body { min-height: 100vh; }
+  body { min-height: 100vh; background-color: rgb(var(--bg-surface)); }
 
   /* Scrollbar */
   ::-webkit-scrollbar       { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: #1e293b; }
-  ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: #6366f1; }
+  ::-webkit-scrollbar-track { background: rgb(var(--bg-surface-card)); }
+  ::-webkit-scrollbar-thumb { background: rgb(var(--color-slate-600)); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgb(var(--color-brand-500)); }
 }
 
 @layer components {

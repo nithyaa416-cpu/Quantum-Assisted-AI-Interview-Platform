@@ -26,6 +26,9 @@ urlpatterns = [
     # Assessment, skill-gap & coding-submission endpoints
     path('api/assessments/', include('apps.assessments.urls')),
 
+    # Coding interview module (problems, run, submit)
+    path('api/assessments/coding/', include('apps.assessments.coding_urls')),
+
     # Target roles (dedicated top-level route)
     path('api/target-roles/', include('apps.resumes.target_role_urls')),
 

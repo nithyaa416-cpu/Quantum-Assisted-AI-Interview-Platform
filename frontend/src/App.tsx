@@ -15,6 +15,8 @@ const PreparationPage     = lazy(() => import('@/pages/PreparationPage'))
 const SessionsPage        = lazy(() => import('@/pages/SessionsPage'))
 const InterviewPage       = lazy(() => import('@/pages/InterviewPage'))
 const InterviewHistoryPage = lazy(() => import('@/pages/InterviewHistoryPage'))
+const CodingInterviewPage  = lazy(() => import('@/pages/CodingInterviewPage'))
+const CodingPracticePage   = lazy(() => import('@/pages/CodingPracticePage'))
 const NotFoundPage        = lazy(() => import('@/pages/NotFoundPage'))
 
 export default function App() {
@@ -44,6 +46,12 @@ export default function App() {
             <Route path="/interview/new"    element={<InterviewPage />} />
             <Route path="/interview/:id"    element={<InterviewPage />} />
             <Route path="/interview/history/:id" element={<InterviewHistoryPage />} />
+            {/* Coding Practice — standalone prep module (not an interview) */}
+            <Route path="/coding-practice"             element={<CodingPracticePage />} />
+            <Route path="/coding-practice/:problemId"  element={<CodingPracticePage />} />
+            {/* Legacy /coding routes — redirect to Coding Practice */}
+            <Route path="/coding"               element={<CodingPracticePage />} />
+            <Route path="/coding/:problemId"    element={<CodingPracticePage />} />
           </Route>
 
           {/* Root redirect */}

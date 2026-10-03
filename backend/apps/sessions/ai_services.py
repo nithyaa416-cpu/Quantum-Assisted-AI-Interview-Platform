@@ -258,13 +258,32 @@ def generate_llm_interview_question(
     last_question_text: str = "",
     last_answer_text: str = "",
     last_score: Optional[float] = None,
+    session_type: str = "mixed",
 ) -> dict:
     """
     Generate dynamic, contextual interview questions using an LLM.
-    - Turn 1: Warm human introduction (Name, education, target role)
-    - Turn 2+: Contextual questions building on candidate's actual verbal answers and resume
+    - Non-coding Turn 1: Warm human introduction
+    - Coding session Turn 1: Coding-focused opener (NOT warmup)
+    - Turn 2+: Contextual questions building on candidate's actual verbal answers
     """
-    # ── Turn 1 is ALWAYS the welcoming personal introduction ───────────────────
+    # ── Turn 1 for CODING sessions — skip warmup, go straight to coding ────────
+    if turn_number <= 1 and session_type == 'coding':
+        return {
+            "question_text": (
+                f"Welcome{f', {candidate_name}' if candidate_name else ''}! "
+                "Let's get straight into the coding round. "
+                "I'll present you with a programming problem. "
+                "Take a moment to understand the problem, then write your solution. "
+                "Feel free to ask for clarification if needed."
+            ),
+            "topic": "coding_introduction",
+            "phase": "coding",
+            "difficulty": difficulty,
+            "question_type": "coding",
+            "expected_concepts": ["algorithm", "problem_solving", "code"],
+        }
+
+    # ── Turn 1 for ALL OTHER sessions is ALWAYS the welcoming personal intro ───
     if turn_number <= 1:
         return {
             "question_text": "Hello! Welcome to your interview today. Could you please start by introducing yourself, stating your full name, your educational background, and what role you are aiming for?",
@@ -274,6 +293,7 @@ def generate_llm_interview_question(
             "question_type": "situational",
             "expected_concepts": ["name", "background", "education", "goals", "skills"],
         }
+
 
     # ── Turn 2+ Query LLM for next dynamic question / follow-up ────────────────
     system_prompt = (
