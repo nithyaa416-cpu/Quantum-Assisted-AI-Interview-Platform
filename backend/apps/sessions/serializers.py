@@ -13,7 +13,7 @@ class InterviewSessionSerializer(serializers.ModelSerializer):
         model = InterviewSession
         fields = [
             'id', 'session_type', 'status', 'difficulty',
-            'target_role', 'target_role_name',
+            'target_role', 'target_role_name', 'resume', 'job_description',
             'quantum_plan', 'started_at', 'ended_at',
             'duration_seconds', 'notes', 'question_count', 'created_at',
         ]

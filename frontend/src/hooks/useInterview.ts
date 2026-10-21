@@ -28,9 +28,13 @@ export function useInterviewSession(id: string | null) {
 
 export function useStartInterview() {
   const qc = useQueryClient()
+  const user = useAuthStore((s) => s.user)
   return useMutation({
     mutationFn: (payload: StartInterviewPayload) => interviewService.startSession(payload),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      if (data?.id) {
+        qc.setQueryData(['interview-session', user?.id, data.id], data)
+      }
       qc.invalidateQueries({ queryKey: ['interview-sessions'] })
     },
     onError: (err) => toast.error(getApiErrorMessage(err, 'Failed to start interview.')),
@@ -59,10 +63,11 @@ export function useSubmitResponse(sessionId: string) {
 export function useEndInterview(sessionId: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: () => interviewService.endSession(sessionId),
+    mutationFn: (analytics?: any) => interviewService.endSession(sessionId, analytics),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['interview-sessions'] })
       qc.invalidateQueries({ queryKey: ['interview-session', sessionId] })
+      qc.invalidateQueries({ queryKey: ['assessment', sessionId] })
     },
     onError: (err) => toast.error(getApiErrorMessage(err, 'Failed to end interview.')),
   })

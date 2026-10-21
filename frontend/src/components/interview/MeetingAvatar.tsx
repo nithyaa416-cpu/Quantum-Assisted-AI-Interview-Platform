@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Volume2, VolumeX, RotateCcw, Bot, MessageSquare } from 'lucide-react'
+import {
+  Volume2, VolumeX, Bot, Sparkles, MessageSquare, RotateCcw
+} from 'lucide-react'
 import {
   stopAllAudioAndSpeech,
   getNewSpeechToken,
   isSpeechTokenValid,
   registerActiveAudio,
+  registerActiveSourceNode,
+  getSharedAudio,
+  getGlobalAudioContext,
+  unlockBrowserAudio,
 } from '@/utils/audioSpeechManager'
 
 export type AvatarState = 'speaking' | 'listening' | 'thinking' | 'idle'
@@ -29,132 +35,287 @@ export function MeetingAvatar({
   showCaptions = true,
 }: MeetingAvatarProps) {
   const [isSpeakingAudio, setIsSpeakingAudio] = useState(false)
-  const spokenQuestionIdRef = useRef<string | null>(null)
+  const [isAutoplayBlocked, setIsAutoplayBlocked] = useState(false)
+
+  // Track the ID of the question that has successfully completed or is currently playing
+  const completedQuestionIdRef = useRef<string | null>(null)
   const safetyTimerRef = useRef<any>(null)
+  const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null)
 
   const onSpeechEndRef = useRef(onSpeechEnd)
   onSpeechEndRef.current = onSpeechEnd
 
-  const speakViaWebSpeech = useCallback((text: string, token: number) => {
-    if (!isSpeechTokenValid(token) || isMuted || typeof window === 'undefined') {
+  /**
+   * Safe Web Speech API Fallback (with Chrome-specific keep-alive and anti-cancel delays)
+   */
+  const speakViaWebSpeech = useCallback((text: string, token: number, qId: string) => {
+    if (!isSpeechTokenValid(token) || isMuted || typeof window === 'undefined' || !('speechSynthesis' in window)) {
       setIsSpeakingAudio(false)
       onSpeechEndRef.current?.()
       return
     }
 
     try {
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume()
+      }
       window.speechSynthesis.cancel()
+
       const utterance = new SpeechSynthesisUtterance(text)
       utterance.rate = 1.0
       utterance.pitch = 1.0
+      utterance.lang = 'en-US'
+      currentUtteranceRef.current = utterance
 
-      const voices = window.speechSynthesis.getVoices()
-      const preferred = voices.find(
-        (v) =>
-          (v.name.includes('Google') ||
-            v.name.includes('Natural') ||
-            v.name.includes('Samantha') ||
-            v.name.includes('Zira') ||
-            v.lang.startsWith('en')) &&
-          !v.name.includes('David')
-      )
-      if (preferred) utterance.voice = preferred
+      const assignPreferredVoice = () => {
+        const voices = window.speechSynthesis.getVoices()
+        if (voices.length > 0) {
+          const preferred = voices.find(
+            (v) =>
+              (v.name.includes('Google') ||
+                v.name.includes('Natural') ||
+                v.name.includes('Samantha') ||
+                v.name.includes('Zira') ||
+                v.name.includes('Aria') ||
+                v.lang.startsWith('en')) &&
+              !v.name.includes('David')
+          )
+          if (preferred) utterance.voice = preferred
+        }
+      }
+
+      assignPreferredVoice()
+
+      let keepaliveTimer: any = null
+
+      const finishWebSpeech = () => {
+        if (keepaliveTimer) clearInterval(keepaliveTimer)
+        completedQuestionIdRef.current = qId
+        setIsSpeakingAudio(false)
+        onSpeechEndRef.current?.()
+      }
 
       utterance.onstart = () => {
         if (!isSpeechTokenValid(token)) {
           window.speechSynthesis.cancel()
+          finishWebSpeech()
           return
         }
+        setIsAutoplayBlocked(false)
         setIsSpeakingAudio(true)
+
+        // Chrome keepalive ping to prevent cut-off at 15s
+        keepaliveTimer = setInterval(() => {
+          if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+            window.speechSynthesis.pause()
+            window.speechSynthesis.resume()
+          }
+        }, 3500)
       }
 
       utterance.onend = () => {
         if (!isSpeechTokenValid(token)) return
-        setIsSpeakingAudio(false)
-        onSpeechEndRef.current?.()
+        finishWebSpeech()
       }
 
-      utterance.onerror = () => {
+      utterance.onerror = (e: any) => {
+        if (keepaliveTimer) clearInterval(keepaliveTimer)
+        console.warn('Web Speech API event:', e?.error)
+        if (e?.error === 'not-allowed') {
+          setIsAutoplayBlocked(true)
+          completedQuestionIdRef.current = null
+        }
         if (!isSpeechTokenValid(token)) return
-        setIsSpeakingAudio(false)
-        onSpeechEndRef.current?.()
+        finishWebSpeech()
       }
 
-      window.speechSynthesis.speak(utterance)
-    } catch {
+      // 60ms delay ensures Chrome IPC cancel signal finishes before new speak starts
+      setTimeout(() => {
+        if (isSpeechTokenValid(token)) {
+          window.speechSynthesis.speak(utterance)
+        }
+      }, 60)
+    } catch (err) {
+      console.warn('speakViaWebSpeech exception:', err)
       setIsSpeakingAudio(false)
       onSpeechEndRef.current?.()
     }
   }, [isMuted])
 
+  /**
+   * Main Question Speech Handler:
+   * Strategy 1: Edge-TTS MP3 via Web Audio API (immune to autoplay block if AudioContext resumed)
+   * Strategy 2: Edge-TTS MP3 via HTML5 Audio element
+   * Strategy 3: Web Speech API synthesis
+   */
   const speakQuestionOnce = useCallback(
-    async (text: string) => {
-      // 1. Instantly invalidate all previous speech and stop any playing audio or speechSynthesis
+    async (text: string, qId: string) => {
+      if (isMuted || !text || text.includes('[CODING_PROBLEM]')) {
+        setIsSpeakingAudio(false)
+        completedQuestionIdRef.current = qId
+        onSpeechEndRef.current?.()
+        return
+      }
+
       const token = getNewSpeechToken()
+
       if (safetyTimerRef.current) {
         clearTimeout(safetyTimerRef.current)
         safetyTimerRef.current = null
       }
 
-      if (isMuted || !text) {
-        setIsSpeakingAudio(false)
-        onSpeechEndRef.current?.()
-        return
-      }
-
       setIsSpeakingAudio(true)
 
-      // Fallback timer: ensure speech end fires within a reasonable window so listening is never blocked
-      const fallbackDuration = Math.min(10000, Math.max(3000, text.split(/\s+/).length * 400))
+      // Safety timeout: ensure mic activates even if speech engine stalls
+      const words = text.split(/\s+/).filter(Boolean).length
+      const maxDurationMs = Math.max(14000, words * 600)
       safetyTimerRef.current = setTimeout(() => {
         if (!isSpeechTokenValid(token)) return
         setIsSpeakingAudio(false)
+        completedQuestionIdRef.current = qId
         onSpeechEndRef.current?.()
-      }, fallbackDuration)
+      }, maxDurationMs)
 
-      // Try edge-tts via backend API
+      // ── STRATEGY 1 & 2: Neural Edge-TTS ──
       try {
-        const audio = new Audio(`/api/interview/tts/?text=${encodeURIComponent(text)}`)
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 7000)
+
+        // Fetch neural MP3 audio from backend
+        const res = await fetch('/api/interview/tts/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, voice: 'en-US-AriaNeural' }),
+          signal: controller.signal,
+        })
+        clearTimeout(timeoutId)
+
+        if (!res.ok) {
+          throw new Error(`TTS server responded with ${res.status}`)
+        }
+
+        const arrayBuffer = await res.arrayBuffer()
+        if (arrayBuffer.byteLength < 300) {
+          throw new Error('TTS audio data is empty')
+        }
+
+        if (!isSpeechTokenValid(token)) return
+
+        // 1. Try Web Audio API Buffer Playback First (bypasses HTML5 Audio autoplay policy)
+        const ctx = getGlobalAudioContext()
+        if (ctx && ctx.state === 'running') {
+          try {
+            // Need a slice because decodeAudioData detaches the buffer
+            const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
+            if (!isSpeechTokenValid(token)) return
+
+            const sourceNode = ctx.createBufferSource()
+            sourceNode.buffer = audioBuffer
+            sourceNode.connect(ctx.destination)
+            registerActiveSourceNode(sourceNode)
+
+            sourceNode.onended = () => {
+              if (!isSpeechTokenValid(token)) return
+              if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current)
+              completedQuestionIdRef.current = qId
+              setIsSpeakingAudio(false)
+              onSpeechEndRef.current?.()
+            }
+
+            sourceNode.start(0)
+            setIsAutoplayBlocked(false)
+            setIsSpeakingAudio(true)
+            return // Successfully playing through Web Audio API!
+          } catch (webAudioErr) {
+            console.debug('Web Audio buffer decode failed, trying HTML5 Audio:', webAudioErr)
+          }
+        }
+
+        // 2. Try HTML5 Audio element
+        const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' })
+        const blobUrl = URL.createObjectURL(blob)
+        const audio = getSharedAudio()
+        audio.src = blobUrl
+        audio.volume = isMuted ? 0 : 1.0
         registerActiveAudio(audio)
 
+        audio.onplay = () => {
+          setIsAutoplayBlocked(false)
+          setIsSpeakingAudio(true)
+        }
+
         audio.onended = () => {
+          URL.revokeObjectURL(blobUrl)
           if (!isSpeechTokenValid(token)) return
           if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current)
+          completedQuestionIdRef.current = qId
           setIsSpeakingAudio(false)
           onSpeechEndRef.current?.()
         }
 
-        audio.onerror = (e) => {
-          // If this token was invalidated (e.g. question advanced or stopped), DO NOT fallback!
+        audio.onerror = () => {
+          URL.revokeObjectURL(blobUrl)
           if (!isSpeechTokenValid(token)) return
-          if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current)
-          console.warn('edge-tts failed, falling back to Web Speech API:', e)
-          speakViaWebSpeech(text, token)
+          speakViaWebSpeech(text, token, qId)
         }
 
-        await audio.play()
+        try {
+          await audio.play()
+          setIsAutoplayBlocked(false)
+          setIsSpeakingAudio(true)
+          return
+        } catch (playErr: any) {
+          URL.revokeObjectURL(blobUrl)
+          if (playErr?.name === 'NotAllowedError') {
+            console.warn('Autoplay blocked by browser policy on HTML5 Audio.')
+            setIsAutoplayBlocked(true)
+            setIsSpeakingAudio(false)
+            completedQuestionIdRef.current = null
+
+            // Listen for ANY user gesture to instantly unblock
+            const unblockAndPlay = () => {
+              setIsAutoplayBlocked(false)
+              unlockBrowserAudio()
+              window.removeEventListener('click', unblockAndPlay)
+              window.removeEventListener('keydown', unblockAndPlay)
+              window.removeEventListener('pointerdown', unblockAndPlay)
+              speakQuestionOnce(text, qId)
+            }
+            window.addEventListener('click', unblockAndPlay, { once: true })
+            window.addEventListener('keydown', unblockAndPlay, { once: true })
+            window.addEventListener('pointerdown', unblockAndPlay, { once: true })
+            return
+          }
+          throw playErr
+        }
       } catch (err: any) {
-        // If aborted or invalidated by a newer question, do NOT fallback
         if (!isSpeechTokenValid(token)) return
-        if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current)
-        console.warn('Audio play failed, falling back to Web Speech:', err)
-        speakViaWebSpeech(text, token)
+        console.warn('Edge-TTS unavailable, falling back to Web Speech synthesis:', err?.message)
+        speakViaWebSpeech(text, token, qId)
       }
     },
     [isMuted, speakViaWebSpeech]
   )
 
-  // Trigger speech EXACTLY ONCE per questionId
+  // Trigger speech when questionId or questionText changes
   useEffect(() => {
     if (!questionId || !questionText) return
 
-    // If this question has already been spoken, do NOT speak it again!
-    if (spokenQuestionIdRef.current === questionId) {
+    // Don't re-trigger if this exact question was already completed
+    if (completedQuestionIdRef.current === questionId) {
       return
     }
 
-    spokenQuestionIdRef.current = questionId
-    speakQuestionOnce(questionText)
+    speakQuestionOnce(questionText, questionId)
+
+    // On unmount (e.g. StrictMode unmount-remount), allow re-triggering if not finished
+    return () => {
+      if (completedQuestionIdRef.current !== questionId) {
+        completedQuestionIdRef.current = null
+      }
+      if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current)
+      stopAllAudioAndSpeech()
+    }
   }, [questionId, questionText, speakQuestionOnce])
 
   // Stop immediately if muted
@@ -166,18 +327,13 @@ export function MeetingAvatar({
     }
   }, [isMuted])
 
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current)
-      stopAllAudioAndSpeech()
-    }
-  }, [])
-
-  // Manual replay button
+  // Manual replay button handler
   const handleManualReplay = () => {
-    if (questionText) {
-      speakQuestionOnce(questionText)
+    unlockBrowserAudio()
+    setIsAutoplayBlocked(false)
+    if (questionText && questionId) {
+      completedQuestionIdRef.current = null
+      speakQuestionOnce(questionText, questionId)
     }
   }
 
@@ -203,10 +359,10 @@ export function MeetingAvatar({
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-xs text-slate-200">
           <Bot className="h-4 w-4 text-brand-400" />
           <span className="font-semibold text-slate-100">AI Examiner</span>
-          <span className="text-slate-400 text-[11px]">&bull; Llama 3 Evaluation</span>
+          <span className="text-slate-400 text-[11px]">&bull; Voice Active</span>
         </div>
 
-        {/* Status indicator and Replay button */}
+        {/* Status indicator and Controls */}
         <div className="flex items-center gap-2">
           <div
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold uppercase tracking-wider backdrop-blur-md border ${
@@ -243,7 +399,7 @@ export function MeetingAvatar({
             type="button"
             onClick={handleManualReplay}
             className="p-1.5 rounded-full bg-black/60 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition-colors"
-            title="Replay Question Audio (1 time)"
+            title="Replay Question Audio"
           >
             <RotateCcw className="h-3.5 w-3.5" />
           </button>
@@ -339,6 +495,20 @@ export function MeetingAvatar({
           </div>
         </div>
       </div>
+
+      {/* Autoplay blocked banner - allows candidate to enable audio with a single tap if browser blocked it */}
+      {isAutoplayBlocked && (
+        <div className="mb-3 z-30 animate-bounce">
+          <button
+            type="button"
+            onClick={handleManualReplay}
+            className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-brand-600 via-indigo-600 to-purple-600 hover:from-brand-500 hover:to-indigo-500 text-white text-xs font-bold shadow-2xl border border-white/20 flex items-center gap-2 cursor-pointer transition-transform hover:scale-105"
+          >
+            <Volume2 className="h-4 w-4 text-emerald-300 animate-pulse" />
+            <span>🔊 Click to Hear Alex Speak Question</span>
+          </button>
+        </div>
+      )}
 
       {/* Closed Captions Subtitles */}
       {showCaptions && questionText && (

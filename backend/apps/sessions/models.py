@@ -55,6 +55,14 @@ class InterviewSession(models.Model):
         blank=True,
         related_name='sessions'
     )
+    resume = models.ForeignKey(
+        'resumes.Resume',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='interview_sessions'
+    )
+    job_description = models.TextField(blank=True, default='')
     session_type = models.CharField(max_length=20, choices=SESSION_TYPE_CHOICES, default='mixed')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='created')
     difficulty = models.CharField(max_length=20, choices=DIFFICULTY_CHOICES, default='intermediate')

@@ -151,11 +151,25 @@ class SessionEndView(APIView):
             session.duration_seconds = int((now - session.started_at).total_seconds())
         session.save(update_fields=['status', 'ended_at', 'duration_seconds'])
 
+        assessment_data = None
+        try:
+            from apps.assessments.services.report_generator import generate_assessment_report
+            from apps.assessments.serializers import AssessmentSerializer
+            assessment = generate_assessment_report(
+                session=session,
+                speech_metrics=request.data.get('speech_metrics'),
+                behavioural_metrics=request.data.get('behavioural_metrics'),
+            )
+            assessment_data = AssessmentSerializer(assessment).data
+        except Exception as e:
+            logger.exception('Failed to generate assessment report in SessionEndView: %s', e)
+
         logger.info('Session completed: %s', session.id)
         return Response({
             'success': True,
             'data': {
                 'session': InterviewSessionSerializer(session).data,
-                'message': 'Session completed. Report generation will begin shortly.',
+                'assessment': assessment_data,
+                'message': 'Session completed and assessment report generated successfully.',
             }
         })

@@ -46,6 +46,42 @@ PHASE_QUESTION_COUNTS = {
 }
 
 
+def is_coding_role(target_role: str, job_description: str = "") -> bool:
+    """
+    Determine whether a target role and JD require practical coding/programming.
+    Allows the platform to be 100% generic across tech and non-tech professions:
+    - Coding roles (Software, Backend, Frontend, DevOps) get coding challenges.
+    - Non-coding roles (Product Manager, Designer, Marketing, Analyst, HR, Finance) get domain case studies / scenarios.
+    """
+    role_lower = (target_role or "").lower()
+    jd_lower = (job_description or "").lower()
+
+    non_coding_keywords = [
+        'product manager', 'product management', 'business analyst',
+        'marketing', 'sales', 'human resources', 'recruiter', 'talent',
+        'ui/ux', 'ux designer', 'ui designer', 'graphic designer',
+        'scrum master', 'project manager', 'operations manager',
+        'finance', 'financial analyst', 'accountant', 'legal',
+        'content writer', 'copywriter', 'seo specialist'
+    ]
+    if any(k in role_lower for k in non_coding_keywords):
+        return False
+
+    coding_keywords = [
+        'developer', 'software', 'backend', 'frontend', 'full stack',
+        'fullstack', 'engineer', 'programmer', 'coder', 'web dev',
+        'ios', 'android', 'mobile', 'devops', 'sre', 'cloud engineer',
+        'machine learning', 'ml engineer', 'ai engineer', 'data engineer'
+    ]
+    if any(k in role_lower for k in coding_keywords):
+        return True
+
+    if any(k in jd_lower for k in ['leetcode', 'data structures and algorithms', 'write code in']):
+        return True
+
+    return True
+
+
 # Answer quality thresholds
 GOOD_ANSWER_THRESHOLD = 0.65    # above this → may increase difficulty or follow up harder
 WEAK_ANSWER_THRESHOLD = 0.35    # below this → follow up with clarification
@@ -84,6 +120,12 @@ class SessionContext:
     resume_skills: list[str] = field(default_factory=list)
     resume_projects: list[str] = field(default_factory=list)
     last_answer_text: str = ""
+    job_description: str = ""
+    covered_topics: list[str] = field(default_factory=list)
+    uncovered_topics: list[str] = field(default_factory=list)
+    remaining_time_seconds: Optional[int] = None
+    remaining_turns: int = 5
+    total_turns: int = 13
 
 
 class AdaptiveInterviewEngine:
@@ -126,6 +168,7 @@ class AdaptiveInterviewEngine:
                 turn_number=1,
                 difficulty='easy',
                 session_type=ctx.session_type,
+                job_description=ctx.job_description,
             )
             return TurnDecision(
                 question_text=intro_q['question_text'],
@@ -141,6 +184,18 @@ class AdaptiveInterviewEngine:
 
         # ── 3. Check if interview should end ───────────────────────────────────
         if self._should_end(ctx):
+            if ctx.current_phase == 'closing' and ctx.questions_in_phase >= 1:
+                return TurnDecision(
+                    question_text="",
+                    phase='closing',
+                    topic='closing',
+                    difficulty_level='easy',
+                    question_type='situational',
+                    expected_concepts=[],
+                    is_follow_up=False,
+                    follow_up_reason=None,
+                    should_end_interview=True,
+                )
             closing = self._get_closing(ctx)
             return TurnDecision(
                 question_text=closing['text'],
@@ -161,25 +216,79 @@ class AdaptiveInterviewEngine:
 
         # ── 5. Coding phase: signal that a coding problem should be served ─────
         if active_phase == 'coding':
-            follow_up_reason = None
-            if ctx.last_answer_score is not None:
-                if ctx.last_answer_score >= GOOD_ANSWER_THRESHOLD:
-                    follow_up_reason = 'strong_answer'
-                elif ctx.last_answer_score < WEAK_ANSWER_THRESHOLD:
-                    follow_up_reason = 'weak_answer'
+            if not is_coding_role(ctx.target_role_name, ctx.job_description):
+                # For non-coding roles (e.g. Product Manager, Marketing, Design), adapt seamlessly to domain case study
+                active_phase = 'case_study'
+            else:
+                follow_up_reason = None
+                if ctx.last_answer_score is not None:
+                    if ctx.last_answer_score >= GOOD_ANSWER_THRESHOLD:
+                        follow_up_reason = 'strong_answer'
+                    elif ctx.last_answer_score < WEAK_ANSWER_THRESHOLD:
+                        follow_up_reason = 'weak_answer'
+                return TurnDecision(
+                    question_text='[CODING_PROBLEM]',  # sentinel: frontend must request a problem
+                    phase='coding',
+                    topic='coding',
+                    difficulty_level=diff,
+                    question_type='coding',
+                    expected_concepts=['algorithm', 'data_structure', 'complexity', 'correctness'],
+                    is_follow_up=True if ctx.turn_number >= 1 else False,
+                    follow_up_reason=follow_up_reason,
+                    should_end_interview=False,
+                )
+
+        # ── 6. Adaptive follow-up checks ───────────────────────────────────────
+        # When no verbal answer text was provided (e.g. initial bank tests), use bank follow-up
+        if (
+            not ctx.last_answer_text
+            and ctx.last_answer_score is not None
+            and ctx.last_answer_score < WEAK_ANSWER_THRESHOLD
+            and ctx.last_question_entry
+            and ctx.last_question_entry.get('follow_ups')
+            and active_phase not in ('closing', 'coding')
+        ):
+            available_followups = [
+                f for f in ctx.last_question_entry['follow_ups']
+                if f not in ctx.asked_question_texts
+            ]
+            if available_followups:
+                follow_up_text = random.choice(available_followups)
+                return TurnDecision(
+                    question_text=follow_up_text,
+                    phase=active_phase,
+                    topic=ctx.last_question_entry.get('topic', active_phase),
+                    difficulty_level='easy',
+                    question_type='conceptual',
+                    expected_concepts=ctx.last_question_entry.get('expected_concepts', []),
+                    is_follow_up=True,
+                    follow_up_reason='weak_answer',
+                    should_end_interview=False,
+                )
+
+        if (
+            not ctx.last_answer_text
+            and ctx.last_answer_score is not None
+            and ctx.last_answer_score >= GOOD_ANSWER_THRESHOLD
+            and ctx.last_question_entry
+            and ctx.last_question_entry.get('harder_follow_up')
+            and ctx.last_question_entry['harder_follow_up'] not in ctx.asked_question_texts
+            and active_phase in ('technical', 'project')
+            and random.random() < 0.5
+        ):
             return TurnDecision(
-                question_text='[CODING_PROBLEM]',  # sentinel: frontend must request a problem
-                phase='coding',
-                topic='coding',
-                difficulty_level=diff,
-                question_type='coding',
-                expected_concepts=['algorithm', 'data_structure', 'complexity', 'correctness'],
-                is_follow_up=True if ctx.turn_number >= 1 else False,
-                follow_up_reason=follow_up_reason,
+                question_text=ctx.last_question_entry['harder_follow_up'],
+                phase=active_phase,
+                topic=ctx.last_question_entry.get('topic', active_phase),
+                difficulty_level=self._next_difficulty(diff),
+                question_type='conceptual',
+                expected_concepts=ctx.last_question_entry.get('expected_concepts', []),
+                is_follow_up=True,
+                follow_up_reason='strong_answer',
                 should_end_interview=False,
             )
 
-        # ── 6. Generate next question dynamically via LLM ──────────────────────
+        # ── 7. Generate next question dynamically via LLM ──────────────────────
         llm_q = generate_llm_interview_question(
             candidate_name=ctx.candidate_name,
             target_role=ctx.target_role_name or ctx.domain,
@@ -192,6 +301,11 @@ class AdaptiveInterviewEngine:
             last_answer_text=ctx.last_answer_text,
             last_score=ctx.last_answer_score,
             session_type=ctx.session_type,
+            job_description=ctx.job_description,
+            uncovered_topics=ctx.uncovered_topics,
+            covered_topics=ctx.covered_topics,
+            remaining_time_seconds=ctx.remaining_time_seconds,
+            remaining_turns=ctx.remaining_turns,
         )
 
         return TurnDecision(
@@ -301,13 +415,25 @@ class AdaptiveInterviewEngine:
         return random.choice(available) if available else None
 
     def _get_closing(self, ctx: SessionContext) -> QuestionEntry:
-        available = [q for q in CLOSING_QUESTIONS if q['text'] not in ctx.asked_question_texts]
-        return available[0] if available else CLOSING_QUESTIONS[0]
+        candidate_part = f", {ctx.candidate_name}" if ctx.candidate_name else ""
+        closing_text = (
+            f"Thank you for sharing your experience with me today{candidate_part}. "
+            "We have covered a lot of ground, and we have a few minutes left. "
+            "I would love to open the floor to you: do you have any questions for me about the role, our team, or the company?"
+        )
+        return {
+            "text": closing_text,
+            "topic": "candidate_qa",
+            "expected_concepts": ["questions", "role", "team", "company", "culture", "responsibilities"],
+            "follow_ups": [],
+            "harder_follow_up": "",
+        }
 
     def _infer_type(self, phase: str) -> str:
         return {
             'warmup': 'situational',
             'technical': 'conceptual',
+            'case_study': 'conceptual',
             'hr': 'behavioral',
             'project': 'project',
             'coding': 'coding',
@@ -359,32 +485,29 @@ def build_ai_feedback(
     expected_concepts: list[str],
     score: float,
     phase: str,
+    target_role: str = "",
+    job_description: str = "",
+    candidate_name: str = "",
 ) -> str:
     """
-    Generate brief AI feedback for a student response.
-    Rule-based for now; LLM-based in Phase 6.
+    Generate immediate, natural conversational feedback for a student response.
+    If in closing phase (Candidate Q&A), Alex answers the candidate's question in character.
+    Otherwise, uses LLM with natural conversational feedback to gently correct mistakes or affirm answers.
     """
-    if score >= GOOD_ANSWER_THRESHOLD:
-        quality = "Strong answer"
-        prefix = "Good response! "
-    elif score >= WEAK_ANSWER_THRESHOLD:
-        quality = "Adequate answer"
-        prefix = "Decent answer. "
-    else:
-        quality = "Needs improvement"
-        prefix = "Your answer could be stronger. "
+    if phase == 'closing' or 'questions for me' in question_text.lower():
+        from .ai_services import generate_interviewer_answer_to_candidate_question
+        return generate_interviewer_answer_to_candidate_question(
+            candidate_question=answer_text,
+            target_role=target_role,
+            job_description=job_description,
+            candidate_name=candidate_name,
+        )
 
-    # Find which concepts were missed
-    answer_lower = answer_text.lower()
-    missed = [
-        c for c in expected_concepts
-        if not any(kw.lower() in answer_lower for kw in c.split() if len(kw) > 3)
-    ]
-
-    if missed and score < GOOD_ANSWER_THRESHOLD:
-        missed_str = ', '.join(missed[:3])
-        return f"{prefix}Consider addressing these concepts in your answer: {missed_str}."
-    elif score >= GOOD_ANSWER_THRESHOLD:
-        return f"{prefix}You covered the key concepts well."
-    else:
-        return f"{prefix}Try to be more specific and structured in your response."
+    from .ai_services import generate_natural_feedback
+    return generate_natural_feedback(
+        question_text=question_text,
+        candidate_answer=answer_text,
+        expected_concepts=expected_concepts,
+        score=score,
+        phase=phase,
+    )

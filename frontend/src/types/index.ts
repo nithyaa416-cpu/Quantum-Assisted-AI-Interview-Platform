@@ -330,6 +330,7 @@ export interface InterviewListItem {
 export interface StartInterviewPayload {
   session_type: 'technical' | 'hr' | 'project' | 'coding' | 'mixed'
   difficulty: 'beginner' | 'intermediate' | 'advanced'
+  duration_minutes?: number
   target_role_id?: string
   target_role_name?: string
   job_description?: string
@@ -368,6 +369,8 @@ export interface SessionSummary {
 export interface Assessment {
   id: string
   session: string
+  session_type?: string
+  target_role?: string | null
   overall_score: number
   technical_score: number
   communication_score: number
@@ -376,5 +379,41 @@ export interface Assessment {
   problem_solving_score: number
   strengths: string[]
   improvement_areas: Array<{ area: string; priority: string; recommendation: string }>
+  detailed_feedback?: {
+    technical?: string
+    communication?: string
+    behavioural?: string
+    proctoring_summary?: {
+      status?: string
+      single_human_compliance?: string
+      mobile_phone_detected?: boolean
+      phone_incidents_count?: number
+      multiple_faces_count?: number
+      proctoring_strikes?: number
+    }
+    quantum_prep_recommendations?: string
+  }
+  speech_metrics?: {
+    words_per_minute?: number
+    total_words_spoken?: number
+    speaking_duration_seconds?: number
+    fluency_score?: number
+    pitch_modulation_score?: number
+    articulation_quality?: string
+    pause_frequency?: string
+  }
+  behavioural_metrics?: {
+    eye_contact_percentage?: number
+    posture_stability_score?: number
+    attentiveness_score?: number
+    confidence_score?: number
+    dominant_expression?: string
+    single_human_compliance?: number
+    phone_detected_incidents?: number
+    multiple_faces_incidents?: number
+    face_absence_incidents?: number
+    proctoring_strikes?: number
+    integrity_status?: string
+  }
   generated_at: string
 }

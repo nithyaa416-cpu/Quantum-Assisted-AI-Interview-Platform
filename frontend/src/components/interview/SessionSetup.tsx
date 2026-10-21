@@ -27,13 +27,45 @@ const DIFFICULTIES = [
   { id: 'advanced',     label: 'Advanced',     desc: 'Campus placement / 1+ years', color: 'text-red-400' },
 ] as const
 
+export const DURATION_OPTIONS = [
+  {
+    minutes: 20,
+    title: '20 Minutes',
+    badge: 'Fresher / Fast Track',
+    badgeClass: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+    desc: 'Targeted screening focusing on foundational knowledge, basic syntax, and crisp problem solving.',
+    expLevel: 'Recommended for Freshers & Entry-Level Graduates',
+  },
+  {
+    minutes: 25,
+    title: '25 Minutes',
+    badge: 'Intermediate (Standard)',
+    badgeClass: 'bg-brand-500/15 text-brand-300 border-brand-500/30',
+    desc: 'Balanced 1-on-1 industry format with deep technical questioning, live problem solving, and behavioral checks.',
+    expLevel: 'Recommended for 1–3 Years Experience (Standard Industry Pace)',
+    recommended: true,
+  },
+  {
+    minutes: 30,
+    title: '30 Minutes',
+    badge: 'Senior / Deep-Dive',
+    badgeClass: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
+    desc: 'Exhaustive technical assessment covering architecture trade-offs, edge cases, project deep-dive, and leadership.',
+    expLevel: 'Recommended for Senior Engineers & Thorough Evaluations',
+  },
+] as const
+
 const POPULAR_ROLES = [
   'Full Stack Developer',
   'Frontend Engineer',
   'Backend Developer',
+  'Product Manager',
   'Data Scientist / ML',
+  'Data Analyst',
+  'UI/UX Designer',
   'DevOps & Cloud Engineer',
-  'Software Engineer',
+  'Business Analyst',
+  'Marketing Specialist',
 ]
 
 interface SessionSetupProps {
@@ -44,6 +76,7 @@ interface SessionSetupProps {
 export function SessionSetup({ onStart, isLoading }: SessionSetupProps) {
   const [sessionType, setSessionType]       = useState<StartInterviewPayload['session_type']>('mixed')
   const [difficulty, setDifficulty]         = useState<StartInterviewPayload['difficulty']>('intermediate')
+  const [durationMinutes, setDurationMinutes] = useState<number>(25)
   const [targetRole, setTargetRole]         = useState('Full Stack Developer')
   const [jobDescription, setJobDescription] = useState('')
   const [selectedResumeId, setSelectedResumeId] = useState<string | undefined>(undefined)
@@ -62,6 +95,7 @@ export function SessionSetup({ onStart, isLoading }: SessionSetupProps) {
     onStart({
       session_type: sessionType,
       difficulty,
+      duration_minutes: durationMinutes,
       target_role_name: targetRole.trim() || undefined,
       job_description: jobDescription.trim() || undefined,
       resume_id: selectedResumeId,
@@ -304,12 +338,88 @@ export function SessionSetup({ onStart, isLoading }: SessionSetupProps) {
         </div>
       </Card>
 
+      {/* Interview Duration Selection */}
+      <Card className="p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-brand-400" />
+            <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wider">
+              Interview Duration & Pacing
+            </h2>
+          </div>
+          <span className="text-xs text-brand-400 font-medium">
+            {durationMinutes} Minutes Selected
+          </span>
+        </div>
+        <p className="text-xs text-slate-400">
+          The AI pacing engine dynamically adjusts question depth, live follow-ups, and transition speed based on your selected duration.
+        </p>
+
+        <div className="space-y-2.5 pt-1">
+          {DURATION_OPTIONS.map((opt) => {
+            const isSelected = durationMinutes === opt.minutes
+            return (
+              <button
+                key={opt.minutes}
+                type="button"
+                onClick={() => setDurationMinutes(opt.minutes)}
+                className={clsx(
+                  'w-full flex items-start justify-between p-3.5 rounded-xl border text-left transition-all duration-150',
+                  isSelected
+                    ? 'bg-brand-600/15 border-brand-500/50 ring-1 ring-brand-500/30'
+                    : 'bg-surface border-surface-border hover:bg-surface-hover hover:border-slate-600'
+                )}
+              >
+                <div className="space-y-1 pr-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-bold text-slate-100">
+                      {opt.title}
+                    </span>
+                    <span
+                      className={clsx(
+                        'px-2 py-0.5 rounded-full text-[11px] font-semibold border',
+                        opt.badgeClass
+                      )}
+                    >
+                      {opt.badge}
+                    </span>
+                    {(opt as any).recommended && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                        Default Recommended
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    {opt.desc}
+                  </p>
+                  <p className="text-[11px] text-slate-500 font-medium flex items-center gap-1.5 pt-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-brand-400/80" />
+                    {opt.expLevel}
+                  </p>
+                </div>
+                <div className="pt-0.5 flex-shrink-0">
+                  <div
+                    className={clsx(
+                      'w-5 h-5 rounded-full border flex items-center justify-center transition-all',
+                      isSelected
+                        ? 'border-brand-400 bg-brand-500/20 text-brand-300'
+                        : 'border-slate-600 bg-slate-800/50'
+                    )}
+                  >
+                    {isSelected && <CheckCircle2 className="w-4 h-4 text-brand-400" />}
+                  </div>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </Card>
+
       {/* Duration hint */}
-      <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-surface border border-surface-border text-xs text-slate-500">
+      <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-surface border border-surface-border text-xs text-slate-400">
         <Clock className="h-4 w-4 flex-shrink-0 text-brand-400" />
         <span>
-          Estimated duration: {sessionType === 'mixed' ? '25–35' : '15–20'} minutes ·
-          The AI adapts question difficulty based on your responses.
+          Selected: <strong className="text-slate-200">{durationMinutes} minutes</strong> · {sessionType === 'mixed' ? 'Full 6-phase simulated panel' : `${sessionType.toUpperCase()} specialized round`} · Real-time AI adapts question difficulty and follow-ups.
         </span>
       </div>
 
@@ -320,7 +430,7 @@ export function SessionSetup({ onStart, isLoading }: SessionSetupProps) {
         className="w-full py-3 text-base"
         icon={<PlayCircle className="h-5 w-5" />}
       >
-        Start AI Interview
+        Continue to Hardware & Biometric Verification
       </Button>
     </div>
   )

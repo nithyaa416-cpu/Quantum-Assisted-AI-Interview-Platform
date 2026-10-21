@@ -7,7 +7,7 @@ Each question has: text, topic, expected_concepts, follow_ups.
 This bank is the fallback engine. In Phase 6, this will be replaced
 by actual LLM generation. The interface stays identical.
 """
-from typing import TypedDict
+from typing import TypedDict, Optional
 
 
 class QuestionEntry(TypedDict):
@@ -463,3 +463,28 @@ def get_technical_questions(domain: str, difficulty: str) -> list[QuestionEntry]
     mapped_domain = domain_map.get(domain, 'software_engineering')
     domain_questions = TECHNICAL_QUESTIONS.get(mapped_domain, TECHNICAL_QUESTIONS['software_engineering'])
     return domain_questions.get(difficulty, domain_questions.get('medium', []))
+
+
+def find_question_in_bank(question_text: str) -> Optional[QuestionEntry]:
+    """Look up a question entry across all categories by text to retrieve follow_ups."""
+    if not question_text:
+        return None
+    normalized = question_text.strip().lower()
+
+    # Check fixed pools
+    for pool in (WARMUP_QUESTIONS, HR_QUESTIONS, PROJECT_QUESTIONS, CLOSING_QUESTIONS):
+        for q in pool:
+            q_text = q['text'].strip().lower()
+            if q_text == normalized or normalized in q_text or q_text in normalized:
+                return q
+
+    # Check technical pools
+    for domain_dict in TECHNICAL_QUESTIONS.values():
+        for diff_list in domain_dict.values():
+            for q in diff_list:
+                q_text = q['text'].strip().lower()
+                if q_text == normalized or normalized in q_text or q_text in normalized:
+                    return q
+
+    return None
+

@@ -32,6 +32,8 @@ class CodingProblem(models.Model):
     examples     = models.JSONField(default=list, blank=True)   # [{input, output, explanation}, ...]
     # Per-language starter code: {"python": "...", "java": "...", "cpp": "..."}
     starter_code = models.JSONField(default=dict)
+    # Per-language driver code: {"python": "...", "java": "...", "cpp": "..."}
+    driver_code  = models.JSONField(default=dict, blank=True)
     time_limit_seconds  = models.FloatField(default=2.0)
     memory_limit_mb     = models.IntegerField(default=256)
     # Topic tags for adaptive selection and weakness detection

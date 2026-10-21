@@ -36,8 +36,11 @@ export const interviewService = {
     return res.data.data
   },
 
-  async endSession(sessionId: string): Promise<{ session_id: string; status: string; total_questions: number; duration_seconds: number }> {
-    const res = await api.post(`/api/interview/sessions/${sessionId}/end/`)
+  async endSession(
+    sessionId: string,
+    analytics?: any
+  ): Promise<{ session_id: string; status: string; total_questions: number; duration_seconds: number; assessment_id?: string; overall_score?: number }> {
+    const res = await api.post(`/api/interview/sessions/${sessionId}/end/`, analytics || {})
     return res.data.data
   },
 
@@ -46,9 +49,12 @@ export const interviewService = {
     return res.data.data
   },
 
-  async transcribeAudio(audioBlob: Blob): Promise<string> {
+  async transcribeAudio(audioBlob: Blob, sessionId?: string): Promise<string> {
     const formData = new FormData()
     formData.append('audio', audioBlob, 'candidate_answer.webm')
+    if (sessionId) {
+      formData.append('session_id', sessionId)
+    }
     const res = await api.post('/api/interview/transcribe/', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })

@@ -2,15 +2,18 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft, CheckCircle2, XCircle, Clock,
   MessageSquare, TrendingUp, ChevronDown, ChevronUp,
+  Award, Brain, Sparkles, FileText
 } from 'lucide-react'
 import { useState } from 'react'
 import { clsx } from 'clsx'
+import { useQuery } from '@tanstack/react-query'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { PhaseIndicator } from '@/components/interview/PhaseIndicator'
-import { SessionTimer } from '@/components/interview/InterviewTimer'
+import { AssessmentReportView } from '@/components/interview/AssessmentReportView'
+import { assessmentService } from '@/services/assessmentService'
 import { useInterviewSession } from '@/hooks/useInterview'
 import type { InterviewTurn } from '@/types'
 
@@ -18,6 +21,7 @@ const PHASE_COLORS: Record<string, string> = {
   warmup:    'bg-amber-500/10 text-amber-300 border-amber-500/20',
   technical: 'bg-blue-500/10 text-blue-300 border-blue-500/20',
   project:   'bg-violet-500/10 text-violet-300 border-violet-500/20',
+  coding:    'bg-amber-500/10 text-amber-300 border-amber-500/20',
   hr:        'bg-green-500/10 text-green-300 border-green-500/20',
   closing:   'bg-slate-500/10 text-slate-300 border-slate-500/20',
 }
@@ -99,23 +103,13 @@ function TurnCard({ turn, index }: { turn: InterviewTurn; index: number }) {
               )}
             </div>
           ) : (
-            <div>
-              <p className="text-xs text-slate-500 font-medium uppercase tracking-wider mb-1.5">Answer</p>
-              <p className="text-sm text-slate-600 italic">Not answered</p>
-            </div>
+            <p className="text-xs text-slate-600 italic">No answer recorded</p>
           )}
 
-          {/* AI feedback */}
+          {/* AI Feedback */}
           {turn.feedback && (
-            <div className={clsx(
-              'p-3 rounded-xl border',
-              isGood
-                ? 'bg-emerald-500/5 border-emerald-500/20'
-                : isWeak
-                ? 'bg-red-500/5 border-red-500/20'
-                : 'bg-amber-500/5 border-amber-500/20',
-            )}>
-              <p className="text-xs font-medium mb-1 flex items-center gap-1.5">
+            <div className="bg-surface rounded-lg p-3 border border-surface-border">
+              <p className="text-xs font-medium flex items-center gap-1.5 mb-1">
                 {isGood
                   ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
                   : <TrendingUp className="h-3.5 w-3.5 text-amber-400" />
@@ -134,17 +128,30 @@ function TurnCard({ turn, index }: { turn: InterviewTurn; index: number }) {
 export default function InterviewHistoryPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { data: session, isLoading } = useInterviewSession(id ?? null)
+  const [activeTab, setActiveTab] = useState<'report' | 'transcript'>('report')
 
-  if (isLoading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>
-  if (!session) return (
-    <div className="text-center py-20 text-slate-500">
-      Session not found.{' '}
-      <Link to="/interview/new" className="text-brand-400">Start a new interview</Link>
-    </div>
-  )
+  const { data: session, isLoading: sessionLoading } = useInterviewSession(id ?? null)
+  const { data: assessment, isLoading: assessmentLoading } = useQuery({
+    queryKey: ['assessment', id],
+    queryFn: () => assessmentService.getSessionAssessment(id!),
+    enabled: Boolean(id),
+    staleTime: 1000 * 60,
+  })
 
-  const answeredTurns  = session.turns.filter(t => t.answered)
+  if (sessionLoading || assessmentLoading) {
+    return <div className="flex justify-center py-20"><Spinner size="lg" /></div>
+  }
+
+  if (!session) {
+    return (
+      <div className="text-center py-20 text-slate-500">
+        Session not found.{' '}
+        <Link to="/interview/new" className="text-brand-400">Start a new interview</Link>
+      </div>
+    )
+  }
+
+  const answeredTurns = session.turns.filter(t => t.answered)
   const avgScore = answeredTurns.length > 0
     ? answeredTurns.reduce((s, t) => s + (t.score ?? 0), 0) / answeredTurns.length
     : 0
@@ -152,22 +159,31 @@ export default function InterviewHistoryPage() {
   const scoreColor = avgScore >= 0.65 ? 'text-emerald-400' : avgScore >= 0.35 ? 'text-amber-400' : 'text-red-400'
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6 animate-slide-up">
-      {/* Back */}
-      <button
-        onClick={() => navigate('/interview/new')}
-        className="flex items-center gap-2 text-slate-400 hover:text-slate-200 text-sm transition-colors"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        New interview
-      </button>
+    <div className="max-w-4xl mx-auto space-y-6 animate-slide-up pb-12">
+      {/* Back button */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => navigate('/interview/new')}
+          className="flex items-center gap-2 text-slate-400 hover:text-slate-200 text-sm transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Start New Interview
+        </button>
 
-      {/* Session summary card */}
-      <Card className="p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+        <Link to="/preparation">
+          <Button variant="ghost" size="sm" className="text-purple-400 hover:text-purple-300 flex items-center gap-1.5 text-xs">
+            <Brain className="h-4 w-4" />
+            <span>Quantum Prep Roadmap</span>
+          </Button>
+        </Link>
+      </div>
+
+      {/* Session Quick Summary Banner */}
+      <Card className="p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex-1">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl font-bold text-slate-100 capitalize">
+              <h1 className="text-lg font-bold text-slate-100 capitalize">
                 {session.session_type.replace('_', ' ')} Interview
               </h1>
               <Badge color={session.status === 'completed' ? 'green' : 'indigo'}>
@@ -175,7 +191,7 @@ export default function InterviewHistoryPage() {
               </Badge>
             </div>
             {session.target_role && (
-              <p className="text-sm text-slate-400 mt-1">{session.target_role}</p>
+              <p className="text-xs text-slate-400 mt-1">Target Role: {session.target_role}</p>
             )}
             <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
               <span>{session.turns.length} questions</span>
@@ -188,44 +204,80 @@ export default function InterviewHistoryPage() {
               )}
             </div>
           </div>
-          {answeredTurns.length > 0 && (
-            <div className="text-center">
-              <p className={clsx('text-3xl font-bold tabular-nums', scoreColor)}>
-                {Math.round(avgScore * 100)}%
-              </p>
-              <p className="text-xs text-slate-500 mt-0.5">Avg Score</p>
-            </div>
-          )}
-        </div>
 
-        <div className="mt-4">
-          <PhaseIndicator
-            currentPhase={session.current_phase}
-            phaseProgress={session.phase_progress}
-          />
+          {/* Tab Switcher Pills */}
+          <div className="flex items-center p-1 rounded-xl bg-slate-900 border border-slate-800">
+            <button
+              onClick={() => setActiveTab('report')}
+              className={clsx(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all',
+                activeTab === 'report'
+                  ? 'bg-brand-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              )}
+            >
+              <Award className="h-3.5 w-3.5" />
+              <span>Assessment Report</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('transcript')}
+              className={clsx(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all',
+                activeTab === 'transcript'
+                  ? 'bg-brand-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              )}
+            >
+              <FileText className="h-3.5 w-3.5" />
+              <span>Transcript &amp; Turns ({session.turns.length})</span>
+            </button>
+          </div>
         </div>
       </Card>
 
-      {/* Turn-by-turn transcript */}
-      <div>
-        <h2 className="text-base font-semibold text-slate-200 mb-3 flex items-center gap-2">
-          <MessageSquare className="h-4 w-4 text-brand-400" />
-          Interview Transcript
-        </h2>
-
-        {session.turns.length === 0 ? (
-          <p className="text-slate-500 text-sm text-center py-8">No questions asked yet.</p>
+      {/* ── Active Tab Display ────────────────────────────────────────────── */}
+      {activeTab === 'report' ? (
+        assessment ? (
+          <AssessmentReportView assessment={assessment} />
         ) : (
-          <div className="space-y-3">
-            {session.turns.map((turn, i) => (
-              <TurnCard key={turn.turn_number} turn={turn} index={i} />
-            ))}
+          <Card className="p-8 text-center space-y-3">
+            <Sparkles className="h-8 w-8 text-brand-400 mx-auto" />
+            <h3 className="text-base font-bold text-slate-200">Assessment Report Generated</h3>
+            <p className="text-xs text-slate-400 max-w-md mx-auto">
+              Evaluation metrics are being synchronized. Review your turns below or check back momentarily.
+            </p>
+            <Button size="sm" onClick={() => setActiveTab('transcript')}>
+              View Transcript
+            </Button>
+          </Card>
+        )
+      ) : (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold text-slate-200 flex items-center gap-2">
+              <MessageSquare className="h-4 w-4 text-brand-400" />
+              Detailed Turn-by-Turn Transcript
+            </h2>
+            <PhaseIndicator
+              currentPhase={session.current_phase}
+              phaseProgress={session.phase_progress}
+            />
           </div>
-        )}
-      </div>
 
-      {/* Footer CTA */}
-      <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
+          {session.turns.length === 0 ? (
+            <p className="text-slate-500 text-sm text-center py-8">No questions asked yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {session.turns.map((turn, i) => (
+                <TurnCard key={turn.turn_number} turn={turn} index={i} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Footer Navigation CTA */}
+      <div className="flex flex-col sm:flex-row gap-3 justify-center pt-4 border-t border-surface-border">
         <Button
           onClick={() => navigate('/interview/new')}
           icon={<MessageSquare className="h-4 w-4" />}

@@ -28,23 +28,77 @@ export function QuestionCard({ question, turnNumber, totalTurns }: QuestionCardP
   const phaseColor = PHASE_COLORS[question.phase] ?? PHASE_COLORS.technical
   const diffConf   = DIFF_CONFIG[question.difficulty] ?? DIFF_CONFIG.medium
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const activeAudioRef = useState<HTMLAudioElement | null>(null)
 
-  // Text-to-Speech: read the question aloud
-  const handleReadAloud = () => {
-    if (!('speechSynthesis' in window)) return
+  // Text-to-Speech: read the question aloud with edge-tts & WebSpeech fallback
+  const handleReadAloud = async () => {
     if (isSpeaking) {
-      window.speechSynthesis.cancel()
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel()
+      }
       setIsSpeaking(false)
       return
     }
-    const utterance = new SpeechSynthesisUtterance(question.text)
-    utterance.lang  = 'en-US'
-    utterance.rate  = 0.92
-    utterance.pitch = 1.0
-    utterance.onend = () => setIsSpeaking(false)
-    utterance.onerror = () => setIsSpeaking(false)
+
     setIsSpeaking(true)
-    window.speechSynthesis.speak(utterance)
+
+    // 1. Try edge-tts via backend POST
+    try {
+      const res = await fetch('/api/interview/tts/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: question.text, voice: 'en-US-AriaNeural' }),
+      })
+      if (res.ok) {
+        const blob = await res.blob()
+        if (blob.size > 300) {
+          const url = URL.createObjectURL(blob)
+          const audio = new Audio(url)
+          audio.onended = () => {
+            URL.revokeObjectURL(url)
+            setIsSpeaking(false)
+          }
+          audio.onerror = () => {
+            URL.revokeObjectURL(url)
+            speakWebSpeech()
+          }
+          await audio.play()
+          return
+        }
+      }
+    } catch {
+      // Fallback to Web Speech
+    }
+
+    speakWebSpeech()
+  }
+
+  const speakWebSpeech = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      setIsSpeaking(false)
+      return
+    }
+    try {
+      if (window.speechSynthesis.paused) window.speechSynthesis.resume()
+      window.speechSynthesis.cancel()
+
+      const utterance = new SpeechSynthesisUtterance(question.text)
+      utterance.lang  = 'en-US'
+      utterance.rate  = 0.95
+      utterance.pitch = 1.0
+
+      const voices = window.speechSynthesis.getVoices()
+      const preferred = voices.find(
+        (v) => (v.name.includes('Google') || v.name.includes('Natural') || v.lang.startsWith('en')) && !v.name.includes('David')
+      )
+      if (preferred) utterance.voice = preferred
+
+      utterance.onend = () => setIsSpeaking(false)
+      utterance.onerror = () => setIsSpeaking(false)
+      window.speechSynthesis.speak(utterance)
+    } catch {
+      setIsSpeaking(false)
+    }
   }
 
   return (
