@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Spinner } from '@/components/ui/Spinner'
 import { useResumes } from '@/hooks/useResumes'
+import { unlockAudioForInterview } from '@/utils/audioSpeechManager'
 import type { StartInterviewPayload } from '@/types'
 
 const SESSION_TYPES = [
@@ -92,6 +93,7 @@ export function SessionSetup({ onStart, isLoading }: SessionSetupProps) {
   }, [resumes, selectedResumeId])
 
   const handleStart = () => {
+    unlockAudioForInterview()
     onStart({
       session_type: sessionType,
       difficulty,

@@ -44,7 +44,11 @@ export function CandidateVideoTile({
       try {
         const s = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: true,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
         })
         localStream = s
         registerMediaStream(s)

@@ -407,7 +407,7 @@ def generate_natural_feedback(
         return "That's a good attempt, but keep in mind the fundamental definitions here."
     elif score >= 0.70:
         if expected_concepts:
-            return f"Spot on! You covered {expected_concepts[0]} very well."
+            return f"Good answer! Spot on, you covered {expected_concepts[0]} very well."
         return "Great answer, you explained that clearly and accurately."
     else:
         if expected_concepts:

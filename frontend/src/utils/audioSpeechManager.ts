@@ -56,8 +56,15 @@ export function unlockBrowserAudio(): void {
   // 1. Resume Web Audio AudioContext
   try {
     const ctx = getGlobalAudioContext()
-    if (ctx && ctx.state === 'suspended') {
-      ctx.resume().catch(() => {})
+    if (ctx) {
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {})
+      }
+      const buffer = ctx.createBuffer(1, 1, 22050)
+      const source = ctx.createBufferSource()
+      source.buffer = buffer
+      source.connect(ctx.destination)
+      source.start(0)
     }
   } catch (e) {
     console.debug('AudioContext resume warning:', e)
@@ -161,6 +168,13 @@ export function registerActiveAudio(audio: HTMLAudioElement): void {
 export function registerActiveSourceNode(node: AudioBufferSourceNode): void {
   activeSourceNode = node
 }
+
+/**
+ * Call during a direct user gesture (such as clicking "Start Interview" or "Continue")
+ * to unlock Web Audio, HTML5 Audio, and Web Speech Synthesis across modern browsers
+ * so that subsequent automatic playback is permitted.
+ */
+export const unlockAudioForInterview = unlockBrowserAudio
 
 // Global safety listeners: stop audio immediately on unload / pagehide
 if (typeof window !== 'undefined') {
