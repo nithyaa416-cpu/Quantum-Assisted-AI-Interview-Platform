@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { AlertTriangle, Maximize2, ShieldAlert, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
+import { interviewAnalyticsCollector } from '@/utils/interviewAnalyticsCollector'
 
 interface ProctoringShieldProps {
   onViolation?: (count: number, reason: string) => void
@@ -15,6 +16,7 @@ export function ProctoringShield({ onViolation, enabled = true }: ProctoringShie
 
   const triggerViolation = useCallback((reason: string) => {
     if (!enabled) return
+    interviewAnalyticsCollector.recordProctoringViolation(reason)
     setViolations((prev) => {
       const next = prev + 1
       onViolation?.(next, reason)

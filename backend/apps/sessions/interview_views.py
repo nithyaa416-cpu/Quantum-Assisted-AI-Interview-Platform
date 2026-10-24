@@ -35,6 +35,7 @@ from .interview_engine import (
     PHASE_QUESTION_COUNTS,
     SCORE_EMPTY,
 )
+from .question_bank import find_question_in_bank
 
 logger = logging.getLogger(__name__)
 engine = AdaptiveInterviewEngine()
@@ -76,14 +77,30 @@ def _build_context(session: InterviewSession) -> SessionContext:
         last_resp = responses.get(last_q.id)
         if last_resp and last_resp.score is not None:
             last_score = float(last_resp.score)
+
         # Reconstruct last QuestionEntry for follow-up logic
-        last_entry = {
-            'text': last_q.question_text,
-            'topic': last_q.topic,
-            'expected_concepts': last_q.expected_concepts,
-            'follow_ups': [],
-            'harder_follow_up': '',
-        }
+        bank_entry = find_question_in_bank(last_q.question_text)
+        if bank_entry:
+            last_entry = {
+                'text': last_q.question_text,
+                'topic': last_q.topic or bank_entry.get('topic', ''),
+                'expected_concepts': last_q.expected_concepts or bank_entry.get('expected_concepts', []),
+                'follow_ups': bank_entry.get('follow_ups', []),
+                'harder_follow_up': bank_entry.get('harder_follow_up', ''),
+            }
+        else:
+            # Provide intelligent adaptive follow-ups for dynamic LLM questions
+            topic_label = last_q.topic or "that implementation"
+            last_entry = {
+                'text': last_q.question_text,
+                'topic': last_q.topic,
+                'expected_concepts': last_q.expected_concepts,
+                'follow_ups': [
+                    f"Could you elaborate on the technical trade-offs or design decisions you made regarding {topic_label}?",
+                    f"What were the key challenges or edge cases you had to account for with {topic_label}?",
+                ],
+                'harder_follow_up': f"How would you optimize and architect {topic_label} for high availability and low latency under production scale?",
+            }
 
     # Phase scores
     phase_scores: dict[str, list[float]] = {}
@@ -107,23 +124,125 @@ def _build_context(session: InterviewSession) -> SessionContext:
             if not candidate_name:
                 candidate_name = session.student.user.email.split('@')[0]
 
-    # Extract resume skills and projects
+    # Job description from session (or fallback from session notes)
+    job_description = (session.job_description or "").strip()
+    if not job_description and session.notes:
+        notes_lines = session.notes.split('\n')
+        jd_lines = [
+            l for l in notes_lines
+            if not l.startswith('[Candidate Name:') and not l.startswith('[Resume')
+        ]
+        job_description = '\n'.join(jd_lines).strip()
+
+    # Extract resume skills and projects from selected session.resume
     resume_skills = []
     resume_projects = []
     try:
-        active_resume = session.student.resumes.filter(is_active=True).first() or session.student.resumes.first()
-        if active_resume and active_resume.parsed_data:
-            parsed = active_resume.parsed_data
-            resume_skills = [s['name'] for s in parsed.get('skills', []) if isinstance(s, dict) and 'name' in s]
-            resume_projects = [p.get('title', '') for p in parsed.get('projects', []) if isinstance(p, dict) and p.get('title')]
-    except Exception:
-        pass
+        resume_to_use = (
+            session.resume
+            or session.student.resumes.filter(is_active=True).first()
+            or session.student.resumes.first()
+        )
+        if resume_to_use:
+            parsed = resume_to_use.parsed_data
+            if not parsed or not resume_to_use.is_parsed:
+                parsed = parse_resume_now(resume_to_use)
+            if parsed:
+                resume_skills = [
+                    s['name'] for s in parsed.get('skills', [])
+                    if isinstance(s, dict) and 'name' in s
+                ]
+                resume_projects = [
+                    p.get('title', '') for p in parsed.get('projects', [])
+                    if isinstance(p, dict) and p.get('title')
+                ]
+    except Exception as exc:
+        logger.warning("Error loading resume context for session %s: %s", session.id, exc)
 
     last_answer_text = ""
     if questions:
         last_resp = responses.get(questions[-1].id)
         if last_resp and last_resp.transcript:
             last_answer_text = last_resp.transcript
+
+    # ── Holistic Factors: Covered vs Uncovered Topics, Timing & Turns ─────────
+    # 1. Topics already covered in previous questions
+    covered_topics: list[str] = []
+    for q in questions:
+        if q.topic and q.topic not in covered_topics:
+            covered_topics.append(q.topic)
+        for c in (q.expected_concepts or []):
+            if c and c not in covered_topics:
+                covered_topics.append(c)
+
+    # 2. Competencies pool from Resume and Job Description
+    target_competencies: list[str] = []
+    for s in resume_skills:
+        s_clean = s.strip()
+        if s_clean and not any(s_clean.lower() == c.lower() for c in target_competencies):
+            target_competencies.append(s_clean)
+    for p in resume_projects:
+        p_clean = p.strip()
+        if p_clean and not any(p_clean.lower() == c.lower() for c in target_competencies):
+            target_competencies.append(p_clean)
+
+    if job_description:
+        import re
+        # 1. Technical competencies
+        common_tech_patterns = [
+            'Python', 'Django', 'FastAPI', 'Flask', 'Java', 'Spring Boot', 'C++', 'C#',
+            'JavaScript', 'TypeScript', 'React', 'Node.js', 'Vue', 'Angular', 'Next.js',
+            'SQL', 'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'Elasticsearch',
+            'Docker', 'Kubernetes', 'AWS', 'Azure', 'GCP', 'CI/CD', 'Git',
+            'REST API', 'GraphQL', 'Microservices', 'System Design', 'Distributed Systems',
+            'Concurrency', 'Multithreading', 'Security', 'Kafka', 'RabbitMQ',
+            'Testing', 'TDD', 'Agile', 'Scrum', 'Data Structures', 'Algorithms'
+        ]
+        # 2. Product, business, data, design & management competencies
+        common_business_patterns = [
+            'Product Management', 'Product Strategy', 'Roadmapping', 'User Research', 'A/B Testing',
+            'UI/UX Design', 'Wireframing', 'Prototyping', 'Figma', 'Design Systems',
+            'Data Analysis', 'Data Visualization', 'Tableau', 'Power BI', 'Statistics',
+            'Machine Learning', 'Deep Learning', 'Computer Vision', 'NLP', 'LLMs',
+            'Business Analysis', 'Stakeholder Management', 'Requirements Gathering', 'Process Mapping',
+            'Financial Modeling', 'Budgeting', 'Risk Management', 'Compliance',
+            'Marketing Strategy', 'SEO', 'SEM', 'Content Marketing', 'Conversion Optimization',
+            'Human Resources', 'Talent Acquisition', 'Performance Management', 'Employee Relations',
+            'Project Management', 'Scrum Master', 'Sprint Planning', 'Cross-functional Collaboration'
+        ]
+        jd_lower = job_description.lower()
+        for pat in common_tech_patterns + common_business_patterns:
+            if re.search(r'\b' + re.escape(pat.lower()) + r'\b', jd_lower):
+                if not any(pat.lower() == c.lower() for c in target_competencies):
+                    target_competencies.append(pat)
+
+        # 3. Extract key requirement phrases from JD lines
+        lines = [line.strip().lstrip('-*• ') for line in job_description.split('\n')]
+        for line in lines:
+            if 4 <= len(line.split()) <= 10 and not line.endswith(':'):
+                if not any(line.lower() in c.lower() for c in target_competencies):
+                    target_competencies.append(line)
+            if len(target_competencies) >= 25:
+                break
+
+    # 3. Determine uncovered topics
+    covered_lower = {c.lower() for c in covered_topics}
+    uncovered_topics: list[str] = [
+        comp for comp in target_competencies
+        if not any(comp.lower() in cov or cov in comp.lower() for cov in covered_lower)
+    ]
+
+    # 4. Timing & Turns Awareness
+    from .interview_engine import PHASE_QUESTION_COUNTS
+    counts = PHASE_QUESTION_COUNTS.get(session.session_type, PHASE_QUESTION_COUNTS['mixed'])
+    total_turns = sum(counts.values())
+    remaining_turns = max(0, total_turns - len(questions))
+
+    target_duration = session.duration_seconds or 1800  # Default 30 min target
+    elapsed_seconds = 0
+    if session.started_at:
+        elapsed_seconds = int((timezone.now() - session.started_at).total_seconds())
+    remaining_time_seconds = max(0, target_duration - elapsed_seconds)
 
     return SessionContext(
         session_type=session.session_type,
@@ -142,6 +261,12 @@ def _build_context(session: InterviewSession) -> SessionContext:
         resume_skills=resume_skills,
         resume_projects=resume_projects,
         last_answer_text=last_answer_text,
+        job_description=job_description,
+        covered_topics=covered_topics,
+        uncovered_topics=uncovered_topics,
+        remaining_time_seconds=remaining_time_seconds,
+        remaining_turns=remaining_turns,
+        total_turns=total_turns,
     )
 
 
@@ -175,6 +300,8 @@ def _serialize_session(session: InterviewSession) -> dict:
         'difficulty': session.difficulty,
         'status': session.status,
         'target_role': target_role_name,
+        'resume_id': str(session.resume_id) if session.resume_id else None,
+        'job_description': session.job_description,
         'started_at': session.started_at,
         'ended_at': session.ended_at,
         'duration_seconds': session.duration_seconds,
@@ -213,7 +340,7 @@ def _phase_progress(session: InterviewSession) -> dict:
 
 def _infer_domain(role_title: str) -> str:
     title = role_title.lower()
-    if any(k in title for k in ['frontend', 'react', 'vue', 'angular', 'ui', 'web design']):
+    if any(k in title for k in ['frontend', 'react', 'vue', 'angular', 'web design']):
         return 'frontend'
     if any(k in title for k in ['data science', 'analytics', 'data analyst', 'business intelligence']):
         return 'data_science'
@@ -229,7 +356,17 @@ def _infer_domain(role_title: str) -> str:
         return 'mobile'
     if any(k in title for k in ['security', 'cyber', 'pentest']):
         return 'cybersecurity'
-    if any(k in title for k in ['product', 'scrum', 'agile']):
+    if any(k in title for k in ['ui/ux', 'ux designer', 'ui designer', 'product designer']):
+        return 'ui_ux_design'
+    if any(k in title for k in ['business analyst', 'bi analyst', 'requirements analyst']):
+        return 'business_analysis'
+    if any(k in title for k in ['marketing', 'seo', 'sem', 'growth', 'brand', 'content']):
+        return 'marketing'
+    if any(k in title for k in ['finance', 'financial', 'accountant', 'banking', 'investment']):
+        return 'finance'
+    if any(k in title for k in ['hr', 'human resources', 'recruiter', 'talent acquisition']):
+        return 'human_resources'
+    if any(k in title for k in ['product', 'scrum', 'agile', 'project manager', 'program manager']):
         return 'product_management'
     return 'software_engineering'
 
@@ -340,13 +477,27 @@ class InterviewSessionListCreateView(APIView):
 
         session_notes = "\n".join(note_parts)
 
+        # Parse duration_minutes if provided (default 25 minutes = 1500 seconds)
+        duration_minutes = data.get('duration_minutes')
+        duration_seconds = 1500
+        if duration_minutes is not None:
+            try:
+                parsed_mins = int(duration_minutes)
+                if 5 <= parsed_mins <= 180:
+                    duration_seconds = parsed_mins * 60
+            except (ValueError, TypeError):
+                pass
+
         # Create session
         session = InterviewSession.objects.create(
             student=profile,
             session_type=session_type,
             difficulty=difficulty,
             target_role=target_role,
+            resume=selected_resume,
+            job_description=job_description,
             notes=session_notes,
+            duration_seconds=duration_seconds,
             status='active',
             started_at=timezone.now(),
         )
@@ -431,7 +582,14 @@ class NextQuestionView(APIView):
         ctx = _build_context(session)
         decision = engine.decide_next_turn(ctx)
 
-        if decision.should_end_interview:
+        counts = PHASE_QUESTION_COUNTS.get(session.session_type, PHASE_QUESTION_COUNTS['mixed'])
+        total_turns_limit = sum(counts.values())
+
+        if (
+            decision.should_end_interview
+            or ctx.turn_number >= total_turns_limit
+            or (ctx.current_phase == 'closing' and ctx.questions_in_phase >= counts.get('closing', 1))
+        ):
             return _ok({'should_end': True, 'message': 'Interview complete. Please end the session.'})
 
         new_q = InterviewQuestion.objects.create(
@@ -499,6 +657,9 @@ class SubmitResponseView(APIView):
         if StudentResponse.objects.filter(question=question).exists():
             return _err('CONFLICT', 'This question has already been answered.', 409)
 
+        target_role_str = session.target_role.role_name if session.target_role else ""
+        candidate_name_str = getattr(session.student, 'full_name', getattr(session.student, 'username', '')) if session.student else ""
+
         # ── Pre-validation: detect empty / noise answers BEFORE scoring ────────
         is_meaningful, classification = _is_meaningful_answer(answer_text)
 
@@ -520,13 +681,26 @@ class SubmitResponseView(APIView):
                 logger.info('ECHO_ANSWER recorded: session=%s question=%s', session.id, question.id)
             else:
                 feedback = (
-                "No answer was provided. Please attempt the question and explain your "
-                "reasoning, even if you are unsure. Partial knowledge is always better "
-                "than silence."
-            )
+                    "No answer was provided. Please attempt the question and explain your "
+                    "reasoning, even if you are unsure. Partial knowledge is always better "
+                    "than silence."
+                )
             logger.info(
                 'NO_ANSWER recorded: session=%s question=%s',
                 session.id, question.id,
+            )
+        elif question.phase == 'closing' or question.topic == 'candidate_qa':
+            # Evaluate answer quality (for closing Candidate Q&A, assess engagement and let Alex answer candidate's question)
+            score = 1.0 if len(answer_text.split()) >= 3 else 0.75
+            feedback = build_ai_feedback(
+                question_text=question.question_text,
+                answer_text=answer_text,
+                expected_concepts=question.expected_concepts,
+                score=score,
+                phase=question.phase,
+                target_role=target_role_str,
+                job_description=session.job_description or "",
+                candidate_name=candidate_name_str,
             )
         else:
             # ── Try LLM scoring first, fall back to keyword heuristic ──────────
@@ -549,8 +723,14 @@ class SubmitResponseView(APIView):
                 parsed   = parse_llm_evaluation(llm_raw, fallback)
                 score    = parsed['score_01']
                 feedback = parsed['feedback'] or build_ai_feedback(
-                    question.question_text, answer_text,
-                    question.expected_concepts, score, question.phase,
+                    question_text=question.question_text,
+                    answer_text=answer_text,
+                    expected_concepts=question.expected_concepts,
+                    score=score,
+                    phase=question.phase,
+                    target_role=target_role_str,
+                    job_description=session.job_description or "",
+                    candidate_name=candidate_name_str,
                 )
                 logger.info(
                     'LLM scored: session=%s turn=%d score=%.2f class=%s',
@@ -560,15 +740,20 @@ class SubmitResponseView(APIView):
                 # Heuristic fallback — LLM unavailable
                 score    = evaluate_answer_quality(answer_text, question.expected_concepts)
                 feedback = build_ai_feedback(
-                    question.question_text, answer_text,
-                    question.expected_concepts, score, question.phase,
+                    question_text=question.question_text,
+                    answer_text=answer_text,
+                    expected_concepts=question.expected_concepts,
+                    score=score,
+                    phase=question.phase,
+                    target_role=target_role_str,
+                    job_description=session.job_description or "",
+                    candidate_name=candidate_name_str,
                 )
                 logger.info(
                     'Heuristic scored: session=%s turn=%d score=%.2f',
                     session.id, question.turn_number, score,
                 )
-
-        # ── Store response ─────────────────────────────────────────────────────
+# ── Store response ─────────────────────────────────────────────────────
         response_obj = StudentResponse.objects.create(
             question=question,
             session=session,
@@ -590,10 +775,14 @@ class SubmitResponseView(APIView):
         interview_complete = False
         next_question_data = None
 
-        # ── Completion check: use engine's phase-aware logic only ──────────────
-        # Do NOT use a hardcoded turn-count limit (was incorrectly 13).
-        # The engine's _should_end() correctly checks all phase quotas.
-        if decision.should_end_interview:
+        counts = PHASE_QUESTION_COUNTS.get(session.session_type, PHASE_QUESTION_COUNTS.get('mixed', {}))
+        total_turns_limit = sum(counts.values()) if counts else 999
+
+        if (
+            decision.should_end_interview
+            or ctx.turn_number >= total_turns_limit
+            or (ctx.current_phase == 'closing' and ctx.questions_in_phase >= counts.get('closing', 1))
+        ):
             interview_complete = True
         else:
             next_q = InterviewQuestion.objects.create(
@@ -639,29 +828,44 @@ class EndInterviewView(APIView):
         except InterviewSession.DoesNotExist:
             return _err('NOT_FOUND', 'Session not found.', 404)
 
-        if session.status == 'completed':
-            return _ok({'message': 'Session already completed.', 'session_id': str(session.id)})
-
         now = timezone.now()
-        session.status = 'completed'
-        session.ended_at = now
-        if session.started_at:
-            session.duration_seconds = int((now - session.started_at).total_seconds())
-        session.save(update_fields=['status', 'ended_at', 'duration_seconds'])
+        if session.status != 'completed':
+            session.status = 'completed'
+            session.ended_at = now
+            if session.started_at:
+                session.duration_seconds = int((now - session.started_at).total_seconds())
+            session.save(update_fields=['status', 'ended_at', 'duration_seconds'])
 
         q_count = session.questions.count()
         r_count = session.responses.count()
 
+        # Generate comprehensive post-interview assessment report
+        assessment_obj = None
+        try:
+            from apps.assessments.services.report_generator import generate_assessment_report
+            assessment_obj = generate_assessment_report(
+                session=session,
+                speech_metrics=request.data.get('speech_metrics'),
+                behavioural_metrics=request.data.get('behavioural_metrics'),
+            )
+        except Exception as e:
+            logger.exception('Failed to generate assessment report for session %s: %s', session.id, e)
+
         logger.info('Interview ended: session=%s turns=%d', session.id, q_count)
 
-        return _ok({
+        resp_data = {
             'session_id': str(session.id),
             'status': 'completed',
             'total_questions': q_count,
             'total_answered': r_count,
             'duration_seconds': session.duration_seconds,
             'message': 'Interview completed successfully.',
-        })
+        }
+        if assessment_obj:
+            resp_data['assessment_id'] = str(assessment_obj.id)
+            resp_data['overall_score'] = float(assessment_obj.overall_score)
+
+        return _ok(resp_data)
 
 
 # ── Interview Coding Endpoints ────────────────────────────────────────────────
@@ -845,12 +1049,14 @@ class InterviewCodingSubmitView(APIView):
         ]
 
         try:
+            driver = problem.driver_code.get(language, '') if problem.driver_code else ''
             run_result = run_test_cases(
                 source_code=source_code,
                 language=language,
                 test_cases=test_cases,
                 time_limit=problem.time_limit_seconds,
                 memory_limit_mb=problem.memory_limit_mb,
+                driver_code=driver,
             )
         except Judge0Error as exc:
             logger.error('Judge0 unavailable during interview submit: %s', exc)
@@ -1013,7 +1219,7 @@ class TranscribeAudioView(APIView):
     """
     POST /api/interview/transcribe/
     Transcribe speech using faster-whisper.
-    Accepts multipart audio file ('audio').
+    Accepts multipart audio file ('audio') and optional 'session_id'.
     """
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
@@ -1024,7 +1230,29 @@ class TranscribeAudioView(APIView):
             return _err('BAD_REQUEST', 'No audio file provided.')
 
         audio_bytes = audio_file.read()
-        text = transcribe_audio_faster_whisper(audio_bytes)
+        session_id = request.data.get('session_id')
+        vocab_prompt = None
+        if session_id:
+            try:
+                session = InterviewSession.objects.filter(pk=session_id).first()
+                if session:
+                    from .ai_services import build_dynamic_vocab_prompt
+                    role_name = session.target_role.role_name if session.target_role else ""
+                    resume_skills = []
+                    if session.resume and session.resume.parsed_data:
+                        resume_skills = [
+                            s['name'] for s in session.resume.parsed_data.get('skills', [])
+                            if isinstance(s, dict) and 'name' in s
+                        ]
+                    vocab_prompt = build_dynamic_vocab_prompt(
+                        target_role=role_name,
+                        resume_skills=resume_skills,
+                        job_description=session.job_description or "",
+                    )
+            except Exception as exc:
+                logger.debug("Failed building dynamic vocab prompt for session %s: %s", session_id, exc)
+
+        text = transcribe_audio_faster_whisper(audio_bytes, vocab_prompt=vocab_prompt)
         return _ok({'text': text})
 
 

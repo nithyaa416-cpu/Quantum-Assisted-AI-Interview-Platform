@@ -55,7 +55,7 @@ export function MeetingAvatar({
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-xs text-slate-200">
           <Bot className="h-4 w-4 text-brand-400" />
           <span className="font-semibold text-slate-100">AI Examiner</span>
-          <span className="text-slate-400 text-[11px]">&bull; Llama 3 Evaluation</span>
+          <span className="text-slate-400 text-[11px]">&bull; Voice Active</span>
         </div>
 
         <div className="flex items-center gap-2">
@@ -96,7 +96,7 @@ export function MeetingAvatar({
             type="button"
             onClick={onReplayRequest}
             className="p-1.5 rounded-full bg-black/60 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition-colors"
-            title="Replay question"
+            title="Replay Question Audio"
           >
             <RotateCcw className="h-3.5 w-3.5" />
           </button>

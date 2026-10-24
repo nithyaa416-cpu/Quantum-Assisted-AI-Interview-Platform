@@ -7,6 +7,8 @@ interface InterviewTimerProps {
   isActive: boolean
   /** Optional per-question timer in seconds */
   questionTimer?: number | null
+  /** Optional targeted session duration in seconds (e.g. 1200, 1500, 1800) */
+  durationSeconds?: number | null
 }
 
 function formatDuration(secs: number): string {
@@ -16,16 +18,43 @@ function formatDuration(secs: number): string {
 }
 
 /** Overall session elapsed timer */
-export function SessionTimer({ startedAt, isActive }: InterviewTimerProps) {
+export function SessionTimer({ startedAt, isActive, durationSeconds }: InterviewTimerProps) {
   const [elapsed, setElapsed] = useState(0)
 
   useEffect(() => {
     if (!isActive || !startedAt) return
-    const base = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000)
+    const base = Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000))
     setElapsed(base)
     const id = setInterval(() => setElapsed(v => v + 1), 1000)
     return () => clearInterval(id)
   }, [isActive, startedAt])
+
+  if (durationSeconds && durationSeconds > 0) {
+    const remaining = Math.max(0, durationSeconds - elapsed)
+    const pct = Math.min(100, Math.round((elapsed / durationSeconds) * 100))
+    const isOvertime = elapsed > durationSeconds
+
+    return (
+      <div
+        className="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800/90 border border-slate-700/80 text-xs shadow-sm"
+        title={`Session duration: ${formatDuration(elapsed)} of ${formatDuration(durationSeconds)} (Target: ${Math.round(durationSeconds / 60)} min)`}
+      >
+        <Clock className={clsx('h-3.5 w-3.5', isOvertime ? 'text-amber-400 animate-pulse' : 'text-brand-400')} />
+        <span className="font-mono text-slate-200 font-semibold">{formatDuration(elapsed)}</span>
+        <span className="text-slate-500">/</span>
+        <span className="font-mono text-slate-400">{formatDuration(durationSeconds)}</span>
+        <div className="w-12 h-1.5 bg-slate-700/80 rounded-full overflow-hidden ml-1 hidden md:block">
+          <div
+            className={clsx(
+              'h-full rounded-full transition-all duration-1000',
+              isOvertime ? 'bg-amber-400' : 'bg-brand-500'
+            )}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex items-center gap-1.5 text-slate-400 text-sm">

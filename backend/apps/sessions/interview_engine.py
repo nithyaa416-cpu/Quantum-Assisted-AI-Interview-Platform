@@ -9,6 +9,7 @@ Drives the interview turn-by-turn. Decides:
 
 All decisions are made per-student, based on their individual session state.
 """
+from contextlib import closing
 import re
 import random
 import logging
@@ -45,13 +46,58 @@ PHASE_QUESTION_COUNTS = {
 
 # ── Scoring constants ──────────────────────────────────────────────────────────
 
+def is_coding_role(target_role: str, job_description: str = "") -> bool:
+    """
+    Determine whether a target role and JD require practical coding/programming.
+    """
+    role_lower = (target_role or "").lower()
+    jd_lower = (job_description or "").lower()
+
+    non_coding_keywords = [
+        'product manager', 'product management', 'business analyst',
+        'marketing', 'sales', 'human resources', 'recruiter', 'talent',
+        'ui/ux', 'ux designer', 'ui designer', 'graphic designer',
+        'scrum master', 'project manager', 'operations manager',
+        'finance', 'financial analyst', 'accountant', 'legal',
+        'content writer', 'copywriter', 'seo specialist'
+    ]
+    if any(k in role_lower for k in non_coding_keywords):
+        return False
+
+    coding_keywords = [
+        'developer', 'software', 'backend', 'frontend', 'full stack',
+        'fullstack', 'engineer', 'programmer', 'coder', 'web dev',
+        'ios', 'android', 'mobile', 'devops', 'sre', 'cloud engineer',
+        'machine learning', 'ml engineer', 'ai engineer', 'data engineer'
+    ]
+    if any(k in role_lower for k in coding_keywords):
+        return True
+
+    if any(k in jd_lower for k in [
+        'leetcode', 'data structures and algorithms', 'write code in'
+    ]):
+        return True
+
+    return True
+
+
 # Score thresholds on the 0.0–1.0 scale
-SCORE_EXCELLENT    = 0.90   # 9-10/10
-SCORE_GOOD         = 0.75   # 7-8/10
-SCORE_ADEQUATE     = 0.55   # 5-6/10
-SCORE_PARTIAL      = 0.35   # 3-4/10
-SCORE_POOR         = 0.15   # 1-2/10
-SCORE_EMPTY        = 0.0    # 0/10 — no answer / noise only
+SCORE_EXCELLENT = 0.90
+SCORE_GOOD = 0.75
+SCORE_ADEQUATE = 0.55
+SCORE_PARTIAL = 0.35
+SCORE_POOR = 0.15
+SCORE_EMPTY = 0.0
+
+# Backward-compatible thresholds used by the interview engine
+GOOD_ANSWER_THRESHOLD = SCORE_GOOD
+WEAK_ANSWER_THRESHOLD = SCORE_PARTIAL
+
+# Noise tokens that do not constitute a real answer even if non-empty
+_NOISE_TOKENS = frozenset({
+    'uh', 'um', 'er', 'hmm', 'hm', 'ah', 'oh', 'okay', 'ok',
+    'yeah', 'yes', 'no', 'yep', 'nope', 'right', 'sure', 'fine',
+})
 
 # Backward-compat alias used by views
 GOOD_ANSWER_THRESHOLD = SCORE_GOOD
@@ -99,6 +145,12 @@ class SessionContext:
     resume_skills: list = field(default_factory=list)
     resume_projects: list = field(default_factory=list)
     last_answer_text: str = ""
+    job_description: str = ""
+    covered_topics: list[str] = field(default_factory=list)
+    uncovered_topics: list[str] = field(default_factory=list)
+    remaining_time_seconds: Optional[int] = None
+    remaining_turns: int = 5
+    total_turns: int = 13
 
 
 # ── Engine ─────────────────────────────────────────────────────────────────────
@@ -141,6 +193,7 @@ class AdaptiveInterviewEngine:
                 turn_number=1,
                 difficulty='easy',
                 session_type=ctx.session_type,
+                job_description=ctx.job_description,
             )
             return TurnDecision(
                 question_text=intro_q['question_text'],
@@ -156,6 +209,18 @@ class AdaptiveInterviewEngine:
 
         # ── 3. Check completion ────────────────────────────────────────────────
         if self._should_end(ctx):
+            if ctx.current_phase == 'closing' and ctx.questions_in_phase >= 1:
+                return TurnDecision(
+                    question_text="",
+                    phase='closing',
+                    topic='closing',
+                    difficulty_level='easy',
+                    question_type='situational',
+                    expected_concepts=[],
+                    is_follow_up=False,
+                    follow_up_reason=None,
+                    should_end_interview=True,
+                )
             closing = self._get_closing(ctx)
             return TurnDecision(
                 question_text=closing['text'],
@@ -176,25 +241,79 @@ class AdaptiveInterviewEngine:
 
         # ── 5. Coding phase: sentinel for coding problem ──────────────────────
         if active_phase == 'coding':
-            follow_up_reason = None
-            if ctx.last_answer_score is not None:
-                if ctx.last_answer_score >= GOOD_ANSWER_THRESHOLD:
-                    follow_up_reason = 'strong_answer'
-                elif ctx.last_answer_score < WEAK_ANSWER_THRESHOLD:
-                    follow_up_reason = 'weak_answer'
+            if not is_coding_role(ctx.target_role_name, ctx.job_description):
+                # For non-coding roles (e.g. Product Manager, Marketing, Design), adapt seamlessly to domain case study
+                active_phase = 'case_study'
+            else:
+                follow_up_reason = None
+                if ctx.last_answer_score is not None:
+                    if ctx.last_answer_score >= GOOD_ANSWER_THRESHOLD:
+                        follow_up_reason = 'strong_answer'
+                    elif ctx.last_answer_score < WEAK_ANSWER_THRESHOLD:
+                        follow_up_reason = 'weak_answer'
+                return TurnDecision(
+                    question_text='[CODING_PROBLEM]',  # sentinel: frontend must request a problem
+                    phase='coding',
+                    topic='coding',
+                    difficulty_level=diff,
+                    question_type='coding',
+                    expected_concepts=['algorithm', 'data_structure', 'complexity', 'correctness'],
+                    is_follow_up=True if ctx.turn_number >= 1 else False,
+                    follow_up_reason=follow_up_reason,
+                    should_end_interview=False,
+                )
+
+        # ── 6. Adaptive follow-up checks ───────────────────────────────────────
+        # When no verbal answer text was provided (e.g. initial bank tests), use bank follow-up
+        if (
+            not ctx.last_answer_text
+            and ctx.last_answer_score is not None
+            and ctx.last_answer_score < WEAK_ANSWER_THRESHOLD
+            and ctx.last_question_entry
+            and ctx.last_question_entry.get('follow_ups')
+            and active_phase not in ('closing', 'coding')
+        ):
+            available_followups = [
+                f for f in ctx.last_question_entry['follow_ups']
+                if f not in ctx.asked_question_texts
+            ]
+            if available_followups:
+                follow_up_text = random.choice(available_followups)
+                return TurnDecision(
+                    question_text=follow_up_text,
+                    phase=active_phase,
+                    topic=ctx.last_question_entry.get('topic', active_phase),
+                    difficulty_level='easy',
+                    question_type='conceptual',
+                    expected_concepts=ctx.last_question_entry.get('expected_concepts', []),
+                    is_follow_up=True,
+                    follow_up_reason='weak_answer',
+                    should_end_interview=False,
+                )
+
+        if (
+            not ctx.last_answer_text
+            and ctx.last_answer_score is not None
+            and ctx.last_answer_score >= GOOD_ANSWER_THRESHOLD
+            and ctx.last_question_entry
+            and ctx.last_question_entry.get('harder_follow_up')
+            and ctx.last_question_entry['harder_follow_up'] not in ctx.asked_question_texts
+            and active_phase in ('technical', 'project')
+            and random.random() < 0.5
+        ):
             return TurnDecision(
-                question_text='[CODING_PROBLEM]',
-                phase='coding',
-                topic='coding',
-                difficulty_level=diff,
-                question_type='coding',
-                expected_concepts=['algorithm', 'data_structure', 'complexity', 'correctness'],
-                is_follow_up=ctx.turn_number >= 1,
-                follow_up_reason=follow_up_reason,
+                question_text=ctx.last_question_entry['harder_follow_up'],
+                phase=active_phase,
+                topic=ctx.last_question_entry.get('topic', active_phase),
+                difficulty_level=self._next_difficulty(diff),
+                question_type='conceptual',
+                expected_concepts=ctx.last_question_entry.get('expected_concepts', []),
+                is_follow_up=True,
+                follow_up_reason='strong_answer',
                 should_end_interview=False,
             )
 
-        # ── 6. Generate next question via LLM ─────────────────────────────────
+        # Generate the next question dynamically via the LLM.
         llm_q = generate_llm_interview_question(
             candidate_name=ctx.candidate_name,
             target_role=ctx.target_role_name or ctx.domain,
@@ -207,6 +326,11 @@ class AdaptiveInterviewEngine:
             last_answer_text=ctx.last_answer_text,
             last_score=ctx.last_answer_score,
             session_type=ctx.session_type,
+            job_description=ctx.job_description,
+            uncovered_topics=ctx.uncovered_topics,
+            covered_topics=ctx.covered_topics,
+            remaining_time_seconds=ctx.remaining_time_seconds,
+            remaining_turns=ctx.remaining_turns,
         )
 
         follow_up_reason = None
@@ -313,13 +437,25 @@ class AdaptiveInterviewEngine:
         return random.choice(available) if available else None
 
     def _get_closing(self, ctx: SessionContext) -> QuestionEntry:
-        available = [q for q in CLOSING_QUESTIONS if q['text'] not in ctx.asked_question_texts]
-        return available[0] if available else CLOSING_QUESTIONS[0]
+        candidate_part = f", {ctx.candidate_name}" if ctx.candidate_name else ""
+        closing_text = (
+            f"Thank you for sharing your experience with me today{candidate_part}. "
+            "We have covered a lot of ground, and we have a few minutes left. "
+            "I would love to open the floor to you: do you have any questions for me about the role, our team, or the company?"
+        )
+        return {
+            "text": closing_text,
+            "topic": "candidate_qa",
+            "expected_concepts": ["questions", "role", "team", "company", "culture", "responsibilities"],
+            "follow_ups": [],
+            "harder_follow_up": "",
+        }
 
     def _infer_type(self, phase: str) -> str:
         return {
             'warmup': 'situational',
             'technical': 'conceptual',
+            'case_study': 'conceptual',
             'hr': 'behavioral',
             'project': 'project',
             'coding': 'coding',
@@ -416,90 +552,43 @@ def build_ai_feedback(
     expected_concepts: list,
     score: float,
     phase: str,
+    target_role: str = "",
+    job_description: str = "",
+    candidate_name: str = "",
 ) -> str:
     """
-    Generate structured AI feedback grounded in the actual answer.
+    Generate natural conversational feedback for a student response.
 
-    Rubric (maps score bands to qualitative labels):
-      0.0        → NO_ANSWER / pure noise
-      0.01–0.20  → Incorrect / major misunderstanding
-      0.21–0.40  → Partially relevant, major gaps
-      0.41–0.60  → Partially correct, some key points
-      0.61–0.75  → Mostly correct, minor gaps
-      0.76–0.90  → Good answer, well explained
-      0.91–1.0   → Excellent — accurate, complete, clear
+    In the closing phase, answer the candidate's question directly.
     """
-    # ── Empty / no-answer ─────────────────────────────────────────────────────
     is_meaningful, classification = _is_meaningful_answer(answer_text)
     if not is_meaningful:
         return (
             "No answer was provided. Please attempt the question and explain your reasoning, "
             "even if you are unsure. Partial knowledge is always better than silence."
         )
+    if phase == "closing" or "questions for me" in question_text.lower():
+        from .ai_services import generate_interviewer_answer_to_candidate_question
 
-    # ── Find missed concepts ───────────────────────────────────────────────────
-    answer_lower = answer_text.lower()
-    missed = [
-        c for c in expected_concepts
-        if not any(kw.lower() in answer_lower for kw in c.split() if len(kw) > 3)
-    ]
-    covered = [c for c in expected_concepts if c not in missed]
-
-    # ── Phase-aware feedback prefix ───────────────────────────────────────────
-    phase_context = {
-        'technical': 'From a technical perspective: ',
-        'project':   'Regarding your project discussion: ',
-        'hr':        'In terms of communication and clarity: ',
-        'warmup':    '',
-        'closing':   '',
-    }.get(phase, '')
-
-    # ── Score-band feedback ────────────────────────────────────────────────────
-    if score >= 0.91:
-        quality = "Excellent answer."
-        prefix = f"{phase_context}Excellent — your answer was accurate, complete, and clearly explained."
-        if covered:
-            prefix += f" You demonstrated strong understanding of: {', '.join(covered[:4])}."
-
-    elif score >= 0.76:
-        quality = "Good answer."
-        prefix = f"{phase_context}Good response — you covered the key concepts well."
-        if missed:
-            prefix += f" You could strengthen your answer by also addressing: {', '.join(missed[:2])}."
-
-    elif score >= 0.61:
-        quality = "Mostly correct."
-        prefix = f"{phase_context}Mostly correct — the core idea is right."
-        if missed:
-            prefix += f" Important points that were missing or incomplete: {', '.join(missed[:3])}."
-
-    elif score >= 0.41:
-        quality = "Partially correct."
-        prefix = f"{phase_context}Partially correct — you showed some relevant understanding."
-        if missed:
-            prefix += f" Key concepts not addressed: {', '.join(missed[:3])}."
-        prefix += " Try to be more structured and thorough in your explanation."
-
-    elif score >= 0.21:
-        quality = "Mostly incorrect."
-        prefix = f"{phase_context}Your answer showed limited understanding of the question."
-        if missed:
-            prefix += f" Key concepts missing: {', '.join(missed[:4])}."
-        prefix += " Review the topic and try to be more specific."
-
-    else:
-        quality = "Incorrect."
-        prefix = (
-            f"{phase_context}The answer did not demonstrate understanding of the concept asked. "
-            "Please review the topic carefully."
+        return generate_interviewer_answer_to_candidate_question(
+            candidate_question=answer_text,
+            target_role=target_role,
+            job_description=job_description,
+            candidate_name=candidate_name,
         )
-        if expected_concepts:
-            prefix += f" Key areas to study: {', '.join(expected_concepts[:4])}."
 
-    return prefix
+    from .ai_services import generate_natural_feedback
+
+    return generate_natural_feedback(
+        question_text=question_text,
+        candidate_answer=answer_text,
+        expected_concepts=expected_concepts,
+        score=score,
+        phase=phase,
+    )
 
 
-# ── LLM-based scoring (called from views when LLM is available) ───────────────
+# LLM-based scoring (called from views when LLM is available)
 
 def build_llm_scoring_prompt(
     question_text: str,
@@ -509,62 +598,50 @@ def build_llm_scoring_prompt(
     question_type: str,
 ) -> tuple[str, str]:
     """
-    Build the system prompt + user prompt for LLM-based answer evaluation.
-
-    The LLM must return structured JSON:
-    {
-      "score": 0-10,
-      "classification": "no_answer|incorrect|partially_correct|mostly_correct|correct|excellent",
-      "strengths": ["..."],
-      "missing_concepts": ["..."],
-      "feedback": "...",
-      "should_follow_up": true/false
-    }
-
-    The LLM is explicitly instructed:
-    - Do NOT award marks for concepts not present in the answer
-    - Empty answers must score 0
-    - Grounding: judge based only on what was actually said
+    Build the system and user prompts for strict LLM-based answer evaluation.
     """
     rubric = """
-SCORING RUBRIC (map your judgment to this scale):
-0/10   — No answer, empty, pure noise, completely unrelated, no evidence of understanding
-1-2/10 — Mostly incorrect, major misunderstanding, very little relevant information
-3-4/10 — Some relevant understanding, major missing concepts, significant inaccuracies
-5-6/10 — Partially correct, core idea understood, some important details missing
-7-8/10 — Mostly correct, good understanding, covers important concepts, minor omissions
-9-10/10— Correct, complete, technically accurate, clear explanation, strong understanding
+SCORING RUBRIC:
+0/10: No answer, empty, pure noise, or completely unrelated.
+1-2/10: Mostly incorrect, with a major misunderstanding.
+3-4/10: Some relevant understanding, but major gaps.
+5-6/10: Partially correct, with important details missing.
+7-8/10: Mostly correct, with minor omissions.
+9-10/10: Correct, complete, technically accurate, and clearly explained.
 """
 
     phase_guidance = {
-        'technical': (
-            "Evaluate: factual correctness, technical terminology, quality of reasoning, "
-            "use of examples, depth of explanation."
+        "technical": (
+            "Evaluate factual correctness, terminology, reasoning, "
+            "examples, and depth of explanation."
         ),
-        'project': (
-            "Evaluate: understanding of their own project, architecture decisions, "
-            "technologies used, implementation details, challenges faced."
+        "project": (
+            "Evaluate understanding of the project, architecture, "
+            "technologies, implementation, and challenges."
         ),
-        'hr': (
-            "Evaluate: relevance to the question, clarity of communication, "
-            "professionalism, authenticity, consistency."
+        "hr": (
+            "Evaluate relevance, clarity, professionalism, and authenticity."
         ),
-        'warmup': (
-            "Evaluate: relevance, clarity, coherence, and ability to articulate background."
+        "warmup": (
+            "Evaluate relevance, clarity, coherence, and background."
         ),
-    }.get(phase, "Evaluate: relevance, correctness, and clarity.")
+    }.get(phase, "Evaluate relevance, correctness, and clarity.")
 
-    expected_str = ', '.join(expected_concepts[:8]) if expected_concepts else 'not specified'
+    expected_str = (
+        ", ".join(expected_concepts[:8])
+        if expected_concepts
+        else "not specified"
+    )
 
-    system_prompt = f"""You are an expert interview evaluator. Your job is to score a candidate's answer strictly and fairly.
+    system_prompt = f"""You are an expert interview evaluator.
 
-CRITICAL RULES — YOU MUST FOLLOW THESE:
-1. If the answer is empty, null, or contains only filler words (uh, um, yes, no, okay), score = 0.
-2. Do NOT award marks for concepts that are NOT present in the candidate's answer.
-3. Do NOT assume the candidate knew something they did not say.
-4. Do NOT be lenient simply because the answer is short — short but correct answers can score 7-10.
-5. Judge based ONLY on what is actually in the answer text.
-6. Return ONLY valid JSON matching the specified schema.
+Follow these rules strictly:
+1. Empty answers, null answers, and answers containing only filler words score 0.
+2. Do not award marks for concepts absent from the candidate's answer.
+3. Do not assume the candidate knows something they did not say.
+4. Short but correct answers can score 7-10.
+5. Judge only the actual answer text.
+6. Return only valid JSON matching the specified schema.
 
 {rubric}
 
@@ -580,101 +657,104 @@ EXPECTED CONCEPTS/RUBRIC:
 CANDIDATE'S ACTUAL ANSWER:
 {answer_text if answer_text and answer_text.strip() else '[NO ANSWER PROVIDED]'}
 
-Evaluate the candidate's answer and return ONLY this JSON (no markdown, no prose):
+Return only this JSON:
 {{
   "score": <integer 0-10>,
   "classification": "<no_answer|incorrect|partially_correct|mostly_correct|correct|excellent>",
-  "strengths": [<list of strings, empty if none>],
-  "missing_concepts": [<list of concepts the answer missed>],
+  "strengths": [],
+  "missing_concepts": [],
   "feedback": "<1-3 sentence constructive feedback>",
-  "should_follow_up": <true if score < 6 and question is worth probing further, else false>
+  "should_follow_up": <true or false>
 }}"""
 
     return system_prompt, user_prompt
 
 
 def parse_llm_evaluation(llm_response: str, fallback_score: float) -> dict:
-    """
-    Parse and validate the LLM evaluation JSON response.
-
-    Rules:
-    - score must be numeric 0-10
-    - classification must be one of the allowed values
-    - no_answer classification forces score = 0
-    - invalid/unparseable response uses fallback_score
-    """
+    """Parse and validate the LLM evaluation JSON response."""
     import json as _json
 
-    ALLOWED_CLASSIFICATIONS = {
-        'no_answer', 'incorrect', 'partially_correct',
-        'mostly_correct', 'correct', 'excellent'
+    allowed_classifications = {
+        "no_answer",
+        "incorrect",
+        "partially_correct",
+        "mostly_correct",
+        "correct",
+        "excellent",
     }
 
     try:
-        # Strip markdown code fences if present
         clean = llm_response.strip()
-        if clean.startswith('```'):
-            clean = re.sub(r'^```[a-z]*\n?', '', clean)
-            clean = re.sub(r'\n?```$', '', clean)
 
-        # Extract JSON object if embedded in prose
-        json_match = re.search(r'\{.*\}', clean, re.DOTALL)
+        if clean.startswith("```"):
+            clean = re.sub(r"^```[a-z]*\n?", "", clean)
+            clean = re.sub(r"\n?```$", "", clean)
+
+        json_match = re.search(r"\{.*\}", clean, re.DOTALL)
         if json_match:
             clean = json_match.group(0)
 
         data = _json.loads(clean)
 
-        # Validate and normalise score
-        raw_score = data.get('score')
+        raw_score = data.get("score")
         if not isinstance(raw_score, (int, float)):
-            logger.warning('LLM returned non-numeric score: %r', raw_score)
+            logger.warning("LLM returned non-numeric score: %r", raw_score)
             raw_score = round(fallback_score * 10)
+
         score = max(0, min(10, int(raw_score)))
 
-        # Validate classification
-        classification = str(data.get('classification', '')).lower().strip()
-        if classification not in ALLOWED_CLASSIFICATIONS:
-            logger.warning('LLM returned unknown classification: %r', classification)
+        classification = str(
+            data.get("classification", "")
+        ).lower().strip()
+
+        if classification not in allowed_classifications:
+            logger.warning(
+                "LLM returned unknown classification: %r", classification
+            )
             classification = _score_to_classification(score / 10.0)
 
-        # Enforce: no_answer must have score 0
-        if classification == 'no_answer':
+        if classification == "no_answer":
             score = 0
 
         return {
-            'score_10':        score,
-            'score_01':        round(score / 10.0, 2),
-            'classification':  classification,
-            'strengths':       data.get('strengths', []),
-            'missing_concepts': data.get('missing_concepts', []),
-            'feedback':        data.get('feedback', ''),
-            'should_follow_up': bool(data.get('should_follow_up', score < 6)),
+            "score_10": score,
+            "score_01": round(score / 10.0, 2),
+            "classification": classification,
+            "strengths": data.get("strengths", []),
+            "missing_concepts": data.get("missing_concepts", []),
+            "feedback": data.get("feedback", ""),
+            "should_follow_up": bool(
+                data.get("should_follow_up", score < 6)
+            ),
         }
 
     except Exception as exc:
-        logger.error('Failed to parse LLM evaluation response: %s | raw: %.200s', exc, llm_response)
-        # Safe fallback — use deterministic score, do NOT invent data
+        logger.error(
+            "Failed to parse LLM evaluation response: %s | raw: %.200s",
+            exc,
+            llm_response,
+        )
         return {
-            'score_10':        round(fallback_score * 10),
-            'score_01':        fallback_score,
-            'classification':  _score_to_classification(fallback_score),
-            'strengths':       [],
-            'missing_concepts': [],
-            'feedback':        'Evaluation could not be parsed. Score based on keyword analysis.',
-            'should_follow_up': fallback_score < 0.5,
+            "score_10": round(fallback_score * 10),
+            "score_01": fallback_score,
+            "classification": _score_to_classification(fallback_score),
+            "strengths": [],
+            "missing_concepts": [],
+            "feedback": (
+                "Evaluation could not be parsed. "
+                "Score based on keyword analysis."
+            ),
+            "should_follow_up": fallback_score < 0.5,
         }
-
-
 def _score_to_classification(score_01: float) -> str:
     if score_01 == 0:
-        return 'no_answer'
+        return "no_answer"
     elif score_01 < 0.25:
-        return 'incorrect'
+        return "incorrect"
     elif score_01 < 0.45:
-        return 'partially_correct'
+        return "partially_correct"
     elif score_01 < 0.65:
-        return 'mostly_correct'
+        return "mostly_correct"
     elif score_01 < 0.85:
-        return 'correct'
-    else:
-        return 'excellent'
+        return "correct"
+    return "excellent"

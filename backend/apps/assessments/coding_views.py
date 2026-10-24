@@ -149,12 +149,14 @@ class RunCodeView(APIView):
         ]
 
         try:
+            driver = problem.driver_code.get(language, '') if problem.driver_code else ''
             run_result = run_test_cases(
                 source_code=source_code,
                 language=language,
                 test_cases=test_cases,
                 time_limit=problem.time_limit_seconds,
                 memory_limit_mb=problem.memory_limit_mb,
+                driver_code=driver,
             )
         except Judge0Error as exc:
             logger.error('Judge0 unavailable during run: %s', exc)
@@ -233,12 +235,14 @@ class SubmitCodeView(APIView):
         ]
 
         try:
+            driver = problem.driver_code.get(language, '') if problem.driver_code else ''
             run_result = run_test_cases(
                 source_code=source_code,
                 language=language,
                 test_cases=test_cases,
                 time_limit=problem.time_limit_seconds,
                 memory_limit_mb=problem.memory_limit_mb,
+                driver_code=driver,
             )
         except Judge0Error as exc:
             logger.error('Judge0 unavailable during submit: %s', exc)

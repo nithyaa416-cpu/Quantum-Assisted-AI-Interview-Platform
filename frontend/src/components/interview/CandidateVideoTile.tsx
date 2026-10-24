@@ -1,6 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
-import { Camera, Mic, ShieldAlert, ShieldCheck } from 'lucide-react'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import {
+  Camera, Mic, ShieldAlert, ShieldCheck, Eye, EyeOff, Users,
+  AlertTriangle, Smartphone, Sparkles
+} from 'lucide-react'
 import { registerMediaStream, unregisterMediaStream } from '@/utils/mediaStreamManager'
+import { mediaPipeService, type FacialVerificationStatus } from '@/utils/mediaPipeService'
+import { interviewAnalyticsCollector } from '@/utils/interviewAnalyticsCollector'
 
 interface CandidateVideoTileProps {
   candidateName: string
@@ -17,6 +22,8 @@ export function CandidateVideoTile({
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [hasPermission, setHasPermission] = useState<boolean | null>(null)
   const [audioLevel, setAudioLevel] = useState<number>(0)
+  const [facialStatus, setFacialStatus] = useState<FacialVerificationStatus | null>(null)
+
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animFrameRef = useRef<number | null>(null)
@@ -25,6 +32,10 @@ export function CandidateVideoTile({
   onStreamReadyRef.current = onStreamReady
   const onHardwareErrorRef = useRef(onHardwareError)
   onHardwareErrorRef.current = onHardwareError
+
+  const handleFacialUpdate = useCallback((status: FacialVerificationStatus) => {
+    setFacialStatus(status)
+  }, [])
 
   useEffect(() => {
     let localStream: MediaStream | null = null
@@ -47,9 +58,15 @@ export function CandidateVideoTile({
 
         if (videoRef.current) {
           videoRef.current.srcObject = s
+          // Initialize MediaPipe face tracking & object detector
+          mediaPipeService.init().then(() => {
+            if (videoRef.current) {
+              mediaPipeService.startTracking(videoRef.current, handleFacialUpdate)
+            }
+          })
         }
 
-        // Live Audio Visualizer (Web Audio API)
+        // Live Audio Visualizer & Frequency Analyzer (Web Audio API)
         try {
           const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
           if (AudioContextClass) {
@@ -60,6 +77,9 @@ export function CandidateVideoTile({
             analyser.fftSize = 64
             source.connect(analyser)
             analyserRef.current = analyser
+
+            // Register with Interview Analytics Collector for voice modulation tracking
+            interviewAnalyticsCollector.setAudioAnalyser(analyser)
 
             const pcmData = new Uint8Array(analyser.frequencyBinCount)
             const tick = () => {
@@ -89,6 +109,7 @@ export function CandidateVideoTile({
     initMedia()
 
     return () => {
+      mediaPipeService.stopTracking(handleFacialUpdate)
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
       if (audioContextRef.current) {
         try { audioContextRef.current.close() } catch {}
@@ -103,7 +124,14 @@ export function CandidateVideoTile({
         } catch {}
       }
     }
-  }, [])
+  }, [handleFacialUpdate])
+
+  const hasEyeContact = facialStatus ? facialStatus.eyeContact.hasEyeContact : true
+  const eyeScore = facialStatus ? facialStatus.eyeContact.score : 100
+  const faceCount = facialStatus ? facialStatus.faceCount : 1
+  const phoneDetected = facialStatus ? facialStatus.phoneDetected : false
+  const confidenceScore = facialStatus?.facialAnalysis?.confidenceScore ?? 85
+  const expression = facialStatus?.facialAnalysis?.expression ?? 'neutral'
 
   return (
     <div className="relative w-full h-full rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 shadow-2xl flex items-center justify-center">
@@ -129,13 +157,70 @@ export function CandidateVideoTile({
         </div>
       )}
 
-      {/* Security watermark */}
+      {/* Top Left: Proctoring watermark */}
       <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/65 backdrop-blur-md border border-white/10 text-[11px] text-slate-300">
         <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-        <span>Monitored &bull; Camera &amp; Mic Locked ON</span>
+        <span>Strict AI Proctoring &bull; 1 Candidate Only</span>
       </div>
 
-      {/* Bottom candidate info bar — no mute / no camera toggle buttons allowed */}
+      {/* Top Right: Live Eye Contact & Poise HUD */}
+      {facialStatus && (
+        <div className="absolute top-3 right-3 flex items-center gap-2">
+          {/* Facial Confidence Pill */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/75 backdrop-blur-md border border-white/10 text-[10px]">
+            <Sparkles className="h-3 w-3 text-indigo-400" />
+            <span className="font-semibold text-indigo-300">Poise: {confidenceScore}%</span>
+            <span className="text-[9px] text-slate-400 capitalize">({expression})</span>
+          </div>
+
+          {/* Eye Contact Pill */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/75 backdrop-blur-md border border-white/10 text-[10px]">
+            {hasEyeContact ? (
+              <>
+                <Eye className="h-3 w-3 text-emerald-400" />
+                <span className="font-semibold text-emerald-300">Eye Contact {eyeScore}%</span>
+              </>
+            ) : (
+              <>
+                <EyeOff className="h-3 w-3 text-amber-400 animate-pulse" />
+                <span className="font-semibold text-amber-300">Gaze Away ({facialStatus.eyeContact.gazeDirection})</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Phone Detected Critical Banner */}
+      {phoneDetected && (
+        <div className="absolute top-12 inset-x-3 z-30 pointer-events-none">
+          <div className="bg-red-600/95 backdrop-blur-md text-white font-bold text-xs px-3 py-2.5 rounded-xl text-center shadow-2xl flex items-center justify-center gap-2 animate-bounce border border-red-400/40">
+            <Smartphone className="w-4 h-4 text-amber-200" />
+            <span>Mobile Phone Detected! Unauthorized devices are strictly prohibited.</span>
+          </div>
+        </div>
+      )}
+
+      {/* Multi-face alert warning */}
+      {!phoneDetected && faceCount > 1 && (
+        <div className="absolute top-12 inset-x-3 z-30 pointer-events-none">
+          <div className="bg-red-600/95 backdrop-blur-md text-white font-bold text-xs px-3 py-2 rounded-xl text-center shadow-2xl flex items-center justify-center gap-2 animate-bounce border border-red-400/40">
+            <Users className="w-4 h-4" />
+            <span>Multiple Faces Detected ({faceCount})! Only the candidate is permitted.</span>
+          </div>
+        </div>
+      )}
+
+      {/* Candidate Absent alert */}
+      {!phoneDetected && faceCount === 0 && (
+        <div className="absolute top-12 inset-x-3 z-30 pointer-events-none">
+          <div className="bg-amber-600/95 backdrop-blur-md text-white font-bold text-xs px-3 py-2 rounded-xl text-center shadow-2xl flex items-center justify-center gap-2 animate-pulse border border-amber-400/40">
+            <AlertTriangle className="w-4 h-4" />
+            <span>Candidate Absent! Please face the camera directly.</span>
+          </div>
+        </div>
+      )}
+
+      {/* Bottom candidate info bar */}
       <div className="absolute bottom-3 inset-x-3 flex items-center justify-between px-3 py-2 rounded-xl bg-black/70 backdrop-blur-md border border-white/10">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-xs font-semibold text-slate-200 truncate">

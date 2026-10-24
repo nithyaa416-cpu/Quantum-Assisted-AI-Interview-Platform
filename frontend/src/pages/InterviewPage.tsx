@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button'
 import { useAuthStore } from '@/store/authStore'
 import { stopAllMediaStreams } from '@/utils/mediaStreamManager'
 import { stopAllAudioAndSpeech } from '@/utils/audioSpeechManager'
+import { interviewAnalyticsCollector } from '@/utils/interviewAnalyticsCollector'
 import {
   useStartInterview, useInterviewSession,
   useSubmitResponse, useEndInterview,
@@ -63,6 +64,7 @@ function ActiveInterviewMeeting({ sessionId }: { sessionId: string }) {
   const handleSubmit = async (answer: string, duration: number) => {
     if (!currentQuestion) return
     try {
+      interviewAnalyticsCollector.recordTurnSpeech(answer, duration)
       const result = await submitResponse({
         questionId: currentQuestion.id,
         answer,
@@ -88,6 +90,8 @@ function ActiveInterviewMeeting({ sessionId }: { sessionId: string }) {
   }
 
   const handleEndInterview = async () => {
+    const analyticsPayload = interviewAnalyticsCollector.getFinalReportPayload()
+    interviewAnalyticsCollector.stop()
     stopAllAudioAndSpeech()
     stopAllMediaStreams()
     try {
@@ -96,7 +100,7 @@ function ActiveInterviewMeeting({ sessionId }: { sessionId: string }) {
           await document.exitFullscreen()
         } catch {}
       }
-      await endInterview()
+      await endInterview(analyticsPayload)
     } catch {
       // handled
     } finally {

@@ -65,10 +65,12 @@ export function useEndInterview(sessionId: string) {
   const qc = useQueryClient()
   const user = useAuthStore((s) => s.user)
   return useMutation({
-    mutationFn: () => interviewService.endSession(sessionId),
+    mutationFn: (analytics?: any) => interviewService.endSession(sessionId, analytics),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['interview-sessions'] })
       qc.invalidateQueries({ queryKey: ['interview-session', user?.id, sessionId] })
+      qc.invalidateQueries({ queryKey: ['interview-session', sessionId] })
+      qc.invalidateQueries({ queryKey: ['assessment', sessionId] })
     },
     onError: (err) => toast.error(getApiErrorMessage(err, 'Failed to end interview.')),
   })

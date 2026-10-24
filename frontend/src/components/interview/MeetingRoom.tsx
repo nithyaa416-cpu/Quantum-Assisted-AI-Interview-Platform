@@ -903,7 +903,7 @@ export function MeetingRoom({
     try {
       const audioBlob = await stopAudioRecording()
       if (audioBlob && audioBlob.size > 2000) {
-        const whisperText = await interviewService.transcribeAudio(audioBlob)
+        const whisperText = await interviewService.transcribeAudio(audioBlob, session.id)
         if (whisperText && whisperText.trim()) {
           const whisperWords = whisperText.trim().split(/\s+/).filter(Boolean)
           if (whisperWords.length >= MIN_WORDS_TO_SUBMIT && (!currentQuestion?.text || !isQuestionEcho(whisperText, currentQuestion.text))) {
@@ -1075,8 +1075,14 @@ export function MeetingRoom({
             <span className="capitalize">{currentQuestion?.phase || session.current_phase} Phase</span>
             <span className="text-slate-500">&bull; Question {session.turn_count || 1}</span>
           </div>
-          <SessionTimer startedAt={session.started_at} isActive={true} />
-          <Button variant="ghost" size="sm" onClick={toggleFullscreen} className="text-slate-400 hover:text-white">
+          <SessionTimer startedAt={session.started_at} isActive={true} durationSeconds={session.duration_seconds} />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleFullscreen}
+            className="text-slate-400 hover:text-white"
+            title={isFullscreen ? 'Exit Full Screen' : 'Enter Full Screen'}
+          >
             {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
           </Button>
         </div>
@@ -1208,7 +1214,7 @@ export function MeetingRoom({
                         : phase === 'STARTING_MICROPHONE'
                         ? 'Connecting Microphone…'
                         : isListening
-                        ? 'Listening & Transcribing Voice Live…'
+                        ? (currentQuestion?.phase === 'closing' ? 'Listening to Your Question for Alex…' : 'Listening & Transcribing Voice Live…')
                         : phase === 'FINALIZING_ANSWER' || phase === 'EVALUATING_ANSWER'
                         ? 'AI Evaluating Answer…'
                         : 'Microphone Ready'}
@@ -1243,7 +1249,9 @@ export function MeetingRoom({
                           : phase === 'STARTING_MICROPHONE'
                           ? 'Microphone is activating…'
                           : isListening
-                          ? 'Speak your answer clearly. A 10-second pause will auto-submit.'
+                          ? (currentQuestion?.phase === 'closing'
+                              ? 'Ask any question about the role, team, or company. Alex will answer verbally.'
+                              : 'Speak your answer clearly. A 10-second pause will auto-submit.')
                           : 'Microphone will activate once the examiner finishes reading the question.'}
                       </p>
                     </div>
@@ -1306,11 +1314,30 @@ export function MeetingRoom({
               </div>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800 text-xs text-slate-300 leading-relaxed">
-              <p className="font-semibold text-slate-200 mb-1">Feedback &amp; Observations:</p>
-              <p>{lastFeedback.response_saved?.feedback || 'Good response. Proceeding to the next question.'}</p>
+            {/* Immediate Conversational Interviewer Feedback */}
+            <div className="p-4 rounded-xl bg-gradient-to-br from-slate-950/80 to-slate-900/90 border border-brand-500/30 text-slate-200 shadow-inner space-y-2">
+              <div className="flex items-center justify-between text-xs text-brand-400 font-semibold uppercase tracking-wider">
+                <span className="flex items-center gap-1.5">
+                  <MessageSquare className="h-3.5 w-3.5" /> Interviewer Reaction
+                </span>
+                <span className="text-[11px] text-slate-400 font-normal">Immediate Feedback</span>
+              </div>
+              <p className="text-sm font-medium text-slate-100 italic leading-relaxed pl-2 border-l-2 border-brand-500">
+                &ldquo;{lastFeedback.response_saved?.feedback || 'Good response. Proceeding to the next question.'}&rdquo;
+              </p>
             </div>
 
+            {/* Next Question Preview (Generated directly from user's previous answer) */}
+            {lastFeedback.next_question && (
+              <div className="p-3.5 rounded-xl bg-slate-950/40 border border-slate-800/80 text-xs text-slate-300 space-y-1">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">
+                  Next Question (Adapted from your answer):
+                </span>
+                <p className="text-slate-200 leading-relaxed font-medium">
+                  {lastFeedback.next_question.text}
+                </p>
+              </div>
+            )}
             {autoAdvanceCountdown !== null && (
               <div className="rounded-xl bg-brand-500/10 border border-brand-500/20 p-2.5 flex items-center justify-between text-xs text-brand-300">
                 <div className="flex items-center gap-2">
