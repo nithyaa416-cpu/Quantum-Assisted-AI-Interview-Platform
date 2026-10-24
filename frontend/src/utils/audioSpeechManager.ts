@@ -66,6 +66,54 @@ export function registerActiveAudio(audio: HTMLAudioElement): void {
   activeAudio = audio
 }
 
+/**
+ * Call during a direct user gesture (such as clicking "Start Interview" or "Continue")
+ * to unlock Web Audio, HTML5 Audio, and Web Speech Synthesis across modern browsers
+ * (Chrome, Edge, Safari, Firefox) so that subsequent automatic playback is permitted.
+ */
+export function unlockAudioForInterview(): void {
+  if (typeof window === 'undefined') return
+
+  // 1. Unlock Web Audio Context
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
+    if (AudioContextClass) {
+      const ctx = new AudioContextClass()
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {})
+      }
+      const buffer = ctx.createBuffer(1, 1, 22050)
+      const source = ctx.createBufferSource()
+      source.buffer = buffer
+      source.connect(ctx.destination)
+      source.start(0)
+    }
+  } catch (e) {
+    console.debug('[Audio] WebAudio unlock attempt:', e)
+  }
+
+  // 2. Prime SpeechSynthesis without empty/whitespace utterance (prevents Chrome deadlock)
+  if ('speechSynthesis' in window) {
+    try {
+      window.speechSynthesis.getVoices()
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume()
+      }
+    } catch (e) {
+      console.debug('[Audio] SpeechSynthesis prime attempt:', e)
+    }
+  }
+
+  // 3. Prime HTMLAudioElement
+  try {
+    const silent = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA')
+    silent.volume = 0.01
+    silent.play().catch(() => {})
+  } catch (e) {
+    console.debug('[Audio] HTMLAudio prime attempt:', e)
+  }
+}
+
 // Global safety listeners: stop audio immediately on unload / pagehide
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', stopAllAudioAndSpeech)

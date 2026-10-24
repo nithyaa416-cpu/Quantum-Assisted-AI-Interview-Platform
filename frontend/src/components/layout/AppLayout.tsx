@@ -21,10 +21,13 @@ export function AppLayout() {
   const location = useLocation()
   const title = pageTitles[location.pathname] ?? 'QAIP'
 
-  // Guarantee that camera, microphone hardware, and audio/speech are completely shut down on all main pages
+  // Guarantee that camera, microphone hardware, and audio/speech are shut down when navigating away from an interview
   useEffect(() => {
-    stopAllMediaStreams()
-    stopAllAudioAndSpeech()
+    const isInterviewRoute = location.pathname.startsWith('/interview')
+    if (!isInterviewRoute) {
+      stopAllMediaStreams()
+      stopAllAudioAndSpeech()
+    }
   }, [location.pathname])
 
   return (

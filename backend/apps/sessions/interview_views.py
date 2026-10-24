@@ -13,6 +13,7 @@ Endpoints:
 The engine is stateless — all state lives in the DB.
 """
 import logging
+import re
 from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.views import APIView
@@ -27,7 +28,12 @@ from .interview_engine import (
     SessionContext,
     evaluate_answer_quality,
     build_ai_feedback,
+    build_llm_scoring_prompt,
+    parse_llm_evaluation,
+    _is_meaningful_answer,
     PHASE_SEQUENCE,
+    PHASE_QUESTION_COUNTS,
+    SCORE_EMPTY,
 )
 
 logger = logging.getLogger(__name__)
@@ -475,34 +481,94 @@ class SubmitResponseView(APIView):
             return _err('BAD_REQUEST', f'Session is {session.status}, not active.')
 
         question_id = request.data.get('question_id')
-        answer_text = request.data.get('answer', '').strip()
+        # Accept empty answers — they score 0, not an HTTP error.
+        # The frontend already does a min-words check before submitting,
+        # but empty strings arriving here are valid (student said nothing for 10s).
+        answer_text = (request.data.get('answer') or '').strip()
         duration    = request.data.get('duration_seconds')
 
         if not question_id:
             return _err('VALIDATION_ERROR', 'question_id is required.')
-        if not answer_text:
-            return _err('VALIDATION_ERROR', 'answer cannot be empty.')
 
         try:
             question = InterviewQuestion.objects.get(pk=question_id, session=session)
         except InterviewQuestion.DoesNotExist:
             return _err('NOT_FOUND', 'Question not found.')
 
-        # Check not already answered
+        # One-shot guard: reject duplicate submissions for the same question
         if StudentResponse.objects.filter(question=question).exists():
             return _err('CONFLICT', 'This question has already been answered.', 409)
 
-        # Evaluate answer quality
-        score = evaluate_answer_quality(answer_text, question.expected_concepts)
-        feedback = build_ai_feedback(
-            question.question_text,
-            answer_text,
-            question.expected_concepts,
-            score,
-            question.phase,
-        )
+        # ── Pre-validation: detect empty / noise answers BEFORE scoring ────────
+        is_meaningful, classification = _is_meaningful_answer(answer_text)
 
-        # Store response
+        # Detect acoustic echo of question
+        is_echo = False
+        if is_meaningful and question.question_text and answer_text:
+            ans_clean = [w for w in re.findall(r"[a-z0-9]+", answer_text.lower()) if len(w) > 2]
+            q_clean = set(w for w in re.findall(r"[a-z0-9]+", question.question_text.lower()) if len(w) > 2)
+            if len(ans_clean) >= 3 and len(q_clean) > 0:
+                match_count = sum(1 for w in ans_clean if w in q_clean)
+                if (match_count / len(ans_clean)) > 0.65:
+                    is_echo = True
+
+        if not is_meaningful or is_echo:
+            # Hard-zero score — do NOT pass to LLM
+            score = SCORE_EMPTY
+            if is_echo:
+                feedback = "The submitted answer appears to be an echo of the examiner's question. Please answer the question in your own words."
+                logger.info('ECHO_ANSWER recorded: session=%s question=%s', session.id, question.id)
+            else:
+                feedback = (
+                "No answer was provided. Please attempt the question and explain your "
+                "reasoning, even if you are unsure. Partial knowledge is always better "
+                "than silence."
+            )
+            logger.info(
+                'NO_ANSWER recorded: session=%s question=%s',
+                session.id, question.id,
+            )
+        else:
+            # ── Try LLM scoring first, fall back to keyword heuristic ──────────
+            from .ai_services import query_llama3
+            sys_p, usr_p = build_llm_scoring_prompt(
+                question.question_text,
+                answer_text,
+                question.expected_concepts,
+                question.phase,
+                question.question_type,
+            )
+            llm_raw = None
+            try:
+                llm_raw = query_llama3(usr_p, sys_p)
+            except Exception as llm_exc:
+                logger.warning('LLM scoring failed, using heuristic: %s', llm_exc)
+
+            if llm_raw:
+                fallback = evaluate_answer_quality(answer_text, question.expected_concepts)
+                parsed   = parse_llm_evaluation(llm_raw, fallback)
+                score    = parsed['score_01']
+                feedback = parsed['feedback'] or build_ai_feedback(
+                    question.question_text, answer_text,
+                    question.expected_concepts, score, question.phase,
+                )
+                logger.info(
+                    'LLM scored: session=%s turn=%d score=%.2f class=%s',
+                    session.id, question.turn_number, score, parsed['classification'],
+                )
+            else:
+                # Heuristic fallback — LLM unavailable
+                score    = evaluate_answer_quality(answer_text, question.expected_concepts)
+                feedback = build_ai_feedback(
+                    question.question_text, answer_text,
+                    question.expected_concepts, score, question.phase,
+                )
+                logger.info(
+                    'Heuristic scored: session=%s turn=%d score=%.2f',
+                    session.id, question.turn_number, score,
+                )
+
+        # ── Store response ─────────────────────────────────────────────────────
         response_obj = StudentResponse.objects.create(
             question=question,
             session=session,
@@ -514,17 +580,20 @@ class SubmitResponseView(APIView):
 
         logger.debug(
             'Response saved: session=%s turn=%d score=%.2f',
-            session.id, question.turn_number, score
+            session.id, question.turn_number, score,
         )
 
-        # Generate next question
+        # ── Generate next question ─────────────────────────────────────────────
         ctx = _build_context(session)
         decision = engine.decide_next_turn(ctx)
 
         interview_complete = False
         next_question_data = None
 
-        if decision.should_end_interview or ctx.turn_number >= 13:
+        # ── Completion check: use engine's phase-aware logic only ──────────────
+        # Do NOT use a hardcoded turn-count limit (was incorrectly 13).
+        # The engine's _should_end() correctly checks all phase quotas.
+        if decision.should_end_interview:
             interview_complete = True
         else:
             next_q = InterviewQuestion.objects.create(

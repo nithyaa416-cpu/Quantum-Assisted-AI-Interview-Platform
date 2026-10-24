@@ -1,4 +1,4 @@
-﻿@tailwind base;
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -36,34 +36,41 @@
 }
 
 html.light-theme {
-  /* Slate (Inverted for Light Theme - RGB values) */
-  --color-slate-50: 2 6 23;
-  --color-slate-100: 15 23 42;
-  --color-slate-200: 30 41 59;
-  --color-slate-300: 51 65 85;
-  --color-slate-400: 71 85 105;
-  --color-slate-500: 100 116 139;
-  --color-slate-600: 148 163 184;
-  --color-slate-700: 203 213 225;
-  --color-slate-800: 226 232 240;
-  --color-slate-900: 255 255 255;
-  --color-slate-950: 248 250 252;
+  /* Neutral Slate (Inverted for Crisp Pure White Light Theme - RGB values) */
+  --color-slate-50: 17 24 39;      /* #111827 - deepest neutral text */
+  --color-slate-100: 31 41 55;     /* #1f2937 - primary text (headings/titles) */
+  --color-slate-200: 55 65 81;     /* #374151 - body & questions */
+  --color-slate-300: 75 85 99;     /* #4b5563 - subheadings & details */
+  --color-slate-400: 107 114 128;  /* #6b7280 - muted meta */
+  --color-slate-500: 156 163 175;  /* #9ca3af - placeholders & small labels */
+  --color-slate-600: 209 213 219;  /* #d1d5db - prominent borders */
+  --color-slate-700: 229 231 235;  /* #e5e7eb - subtle borders */
+  --color-slate-800: 243 244 246;  /* #f3f4f6 - chips & badges */
+  --color-slate-900: 255 255 255;  /* #ffffff - pure white card */
+  --color-slate-950: 255 255 255;  /* #ffffff - pure white surface */
 
   /* Brand (Light Theme Adjustments) */
   --color-brand-200: 79 70 229;
   --color-brand-300: 67 56 202;
   --color-brand-400: 55 48 163;
+  --color-brand-500: 79 70 229;
 
-  /* Surface (Light Theme - RGB values) */
-  --bg-surface: 248 250 252;
+  /* Surface (Pure White Light Theme - RGB values) */
+  --bg-surface: 255 255 255;
   --bg-surface-card: 255 255 255;
-  --bg-surface-hover: 241 245 249;
-  --bg-surface-border: 226 232 240;
+  --bg-surface-hover: 243 244 246;
+  --bg-surface-border: 229 231 235;
+}
+
+html.light-theme .glass-card {
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
 }
 
 @layer base {
   * { box-sizing: border-box; }
-  body { min-height: 100vh; background-color: rgb(var(--bg-surface)); }
+  body { min-height: 100vh; background-color: rgb(var(--bg-surface)); color: rgb(var(--color-slate-100)); }
 
   /* Scrollbar */
   ::-webkit-scrollbar       { width: 6px; height: 6px; }
@@ -82,4 +89,44 @@ html.light-theme {
   .section-title { @apply text-xl font-bold text-slate-100; }
   .section-sub   { @apply text-sm text-slate-400; }
   .badge         { @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium; }
+
+  /* Modern Tech Landing Grid and Effects */
+  .tech-grid {
+    background-size: 40px 40px;
+   background-image: linear-gradient(to right, rgba(99, 102, 241, 0.07) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(99, 102, 241, 0.07) 1px, transparent 1px);
+  }
+  .tech-dots {
+    background-image: radial-gradient(rgba(99, 102, 241, 0.15) 1.5px, transparent 1.5px);
+    background-size: 28px 28px;
+  }
+  .glass-card {
+    background: rgba(15, 23, 42, 0.65);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+}
+
+@keyframes floatSlow {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes pulseRing {
+  0% { transform: scale(0.96); opacity: 0.6; }
+  50% { transform: scale(1.04); opacity: 0.9; }
+  100% { transform: scale(0.96); opacity: 0.6; }
+}
+@keyframes quantumSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-float {
+  animation: floatSlow 5s ease-in-out infinite;
+}
+.animate-spin-slow {
+  animation: quantumSpin 25s linear infinite;
+}
+.animate-pulse-ring {
+  animation: pulseRing 3.5s ease-in-out infinite;
 }

@@ -1,9 +1,11 @@
-﻿import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
+import { useThemeStore } from '@/store/themeStore'
+import type { Theme } from '@/store/themeStore'
 
 export function useTheme() {
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    return (localStorage.getItem('theme') as 'dark' | 'light') || 'dark'
-  })
+  const theme = useThemeStore((s) => s.theme)
+  const toggleTheme = useThemeStore((s) => s.toggleTheme)
+  const setTheme = useThemeStore((s) => s.setTheme)
 
   useEffect(() => {
     if (theme === 'light') {
@@ -11,10 +13,9 @@ export function useTheme() {
     } else {
       document.documentElement.classList.remove('light-theme')
     }
-    localStorage.setItem('theme', theme)
   }, [theme])
 
-  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
-
-  return { theme, toggleTheme }
+  return { theme, toggleTheme, setTheme }
 }
+
+export type { Theme }

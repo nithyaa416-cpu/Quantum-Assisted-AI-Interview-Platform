@@ -1,191 +1,43 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+/**
+ * MeetingAvatar — DISPLAY-ONLY component.
+ *
+ * All TTS / speech playback has been moved to MeetingRoom so that the
+ * state machine lives in one place and autoplay / fallback / token
+ * management are not split across a prop boundary.
+ *
+ * This component only:
+ *  - renders the animated avatar graphic based on `avatarState`
+ *  - shows the closed-caption subtitle
+ *  - emits `onReplayRequest` when the user clicks the replay button
+ *  - shows the mute toggle
+ */
 import { Volume2, VolumeX, RotateCcw, Bot, MessageSquare } from 'lucide-react'
-import {
-  stopAllAudioAndSpeech,
-  getNewSpeechToken,
-  isSpeechTokenValid,
-  registerActiveAudio,
-} from '@/utils/audioSpeechManager'
 
 export type AvatarState = 'speaking' | 'listening' | 'thinking' | 'idle'
 
 interface MeetingAvatarProps {
-  questionId: string
-  questionText: string
   avatarState: AvatarState
+  questionText: string
   isMuted?: boolean
   onToggleMute?: () => void
-  onSpeechEnd?: () => void
+  /** Called when the user presses the replay button — MeetingRoom handles actual playback */
+  onReplayRequest?: () => void
   showCaptions?: boolean
 }
 
 export function MeetingAvatar({
-  questionId,
-  questionText,
   avatarState,
+  questionText,
   isMuted = false,
   onToggleMute,
-  onSpeechEnd,
+  onReplayRequest,
   showCaptions = true,
 }: MeetingAvatarProps) {
-  const [isSpeakingAudio, setIsSpeakingAudio] = useState(false)
-  const spokenQuestionIdRef = useRef<string | null>(null)
-  const safetyTimerRef = useRef<any>(null)
-
-  const onSpeechEndRef = useRef(onSpeechEnd)
-  onSpeechEndRef.current = onSpeechEnd
-
-  const speakViaWebSpeech = useCallback((text: string, token: number) => {
-    if (!isSpeechTokenValid(token) || isMuted || typeof window === 'undefined') {
-      setIsSpeakingAudio(false)
-      onSpeechEndRef.current?.()
-      return
-    }
-
-    try {
-      window.speechSynthesis.cancel()
-      const utterance = new SpeechSynthesisUtterance(text)
-      utterance.rate = 1.0
-      utterance.pitch = 1.0
-
-      const voices = window.speechSynthesis.getVoices()
-      const preferred = voices.find(
-        (v) =>
-          (v.name.includes('Google') ||
-            v.name.includes('Natural') ||
-            v.name.includes('Samantha') ||
-            v.name.includes('Zira') ||
-            v.lang.startsWith('en')) &&
-          !v.name.includes('David')
-      )
-      if (preferred) utterance.voice = preferred
-
-      utterance.onstart = () => {
-        if (!isSpeechTokenValid(token)) {
-          window.speechSynthesis.cancel()
-          return
-        }
-        setIsSpeakingAudio(true)
-      }
-
-      utterance.onend = () => {
-        if (!isSpeechTokenValid(token)) return
-        setIsSpeakingAudio(false)
-        onSpeechEndRef.current?.()
-      }
-
-      utterance.onerror = () => {
-        if (!isSpeechTokenValid(token)) return
-        setIsSpeakingAudio(false)
-        onSpeechEndRef.current?.()
-      }
-
-      window.speechSynthesis.speak(utterance)
-    } catch {
-      setIsSpeakingAudio(false)
-      onSpeechEndRef.current?.()
-    }
-  }, [isMuted])
-
-  const speakQuestionOnce = useCallback(
-    async (text: string) => {
-      // 1. Instantly invalidate all previous speech and stop any playing audio or speechSynthesis
-      const token = getNewSpeechToken()
-      if (safetyTimerRef.current) {
-        clearTimeout(safetyTimerRef.current)
-        safetyTimerRef.current = null
-      }
-
-      if (isMuted || !text) {
-        setIsSpeakingAudio(false)
-        onSpeechEndRef.current?.()
-        return
-      }
-
-      setIsSpeakingAudio(true)
-
-      // Fallback timer: ensure speech end fires within a reasonable window so listening is never blocked
-      const fallbackDuration = Math.min(10000, Math.max(3000, text.split(/\s+/).length * 400))
-      safetyTimerRef.current = setTimeout(() => {
-        if (!isSpeechTokenValid(token)) return
-        setIsSpeakingAudio(false)
-        onSpeechEndRef.current?.()
-      }, fallbackDuration)
-
-      // Try edge-tts via backend API
-      try {
-        const audio = new Audio(`/api/interview/tts/?text=${encodeURIComponent(text)}`)
-        registerActiveAudio(audio)
-
-        audio.onended = () => {
-          if (!isSpeechTokenValid(token)) return
-          if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current)
-          setIsSpeakingAudio(false)
-          onSpeechEndRef.current?.()
-        }
-
-        audio.onerror = (e) => {
-          // If this token was invalidated (e.g. question advanced or stopped), DO NOT fallback!
-          if (!isSpeechTokenValid(token)) return
-          if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current)
-          console.warn('edge-tts failed, falling back to Web Speech API:', e)
-          speakViaWebSpeech(text, token)
-        }
-
-        await audio.play()
-      } catch (err: any) {
-        // If aborted or invalidated by a newer question, do NOT fallback
-        if (!isSpeechTokenValid(token)) return
-        if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current)
-        console.warn('Audio play failed, falling back to Web Speech:', err)
-        speakViaWebSpeech(text, token)
-      }
-    },
-    [isMuted, speakViaWebSpeech]
-  )
-
-  // Trigger speech EXACTLY ONCE per questionId
-  useEffect(() => {
-    if (!questionId || !questionText) return
-
-    // If this question has already been spoken, do NOT speak it again!
-    if (spokenQuestionIdRef.current === questionId) {
-      return
-    }
-
-    spokenQuestionIdRef.current = questionId
-    speakQuestionOnce(questionText)
-  }, [questionId, questionText, speakQuestionOnce])
-
-  // Stop immediately if muted
-  useEffect(() => {
-    if (isMuted) {
-      if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current)
-      stopAllAudioAndSpeech()
-      setIsSpeakingAudio(false)
-    }
-  }, [isMuted])
-
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current)
-      stopAllAudioAndSpeech()
-    }
-  }, [])
-
-  // Manual replay button
-  const handleManualReplay = () => {
-    if (questionText) {
-      speakQuestionOnce(questionText)
-    }
-  }
-
-  const effectiveState = isSpeakingAudio ? 'speaking' : avatarState
+  const effectiveState = avatarState
 
   return (
     <div className="relative w-full h-full rounded-2xl overflow-hidden bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border border-slate-800 shadow-2xl flex flex-col items-center justify-center p-4 select-none">
-      {/* Dynamic ambient lighting based on state */}
+      {/* Dynamic ambient lighting */}
       <div
         className={`absolute inset-0 opacity-25 pointer-events-none transition-all duration-700 ${
           effectiveState === 'speaking'
@@ -198,7 +50,7 @@ export function MeetingAvatar({
         }`}
       />
 
-      {/* Top Header on Avatar Tile */}
+      {/* Top header */}
       <div className="absolute top-3 inset-x-3 flex items-center justify-between z-10">
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-xs text-slate-200">
           <Bot className="h-4 w-4 text-brand-400" />
@@ -206,8 +58,8 @@ export function MeetingAvatar({
           <span className="text-slate-400 text-[11px]">&bull; Llama 3 Evaluation</span>
         </div>
 
-        {/* Status indicator and Replay button */}
         <div className="flex items-center gap-2">
+          {/* State badge */}
           <div
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold uppercase tracking-wider backdrop-blur-md border ${
               effectiveState === 'speaking'
@@ -239,11 +91,12 @@ export function MeetingAvatar({
               : 'Standby'}
           </div>
 
+          {/* Replay button — requests playback from MeetingRoom */}
           <button
             type="button"
-            onClick={handleManualReplay}
+            onClick={onReplayRequest}
             className="p-1.5 rounded-full bg-black/60 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition-colors"
-            title="Replay Question Audio (1 time)"
+            title="Replay question"
           >
             <RotateCcw className="h-3.5 w-3.5" />
           </button>
@@ -254,12 +107,16 @@ export function MeetingAvatar({
             className="p-1.5 rounded-full bg-black/60 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition-colors"
             title={isMuted ? 'Unmute Audio' : 'Mute Audio'}
           >
-            {isMuted ? <VolumeX className="h-3.5 w-3.5 text-red-400" /> : <Volume2 className="h-3.5 w-3.5 text-slate-300" />}
+            {isMuted ? (
+              <VolumeX className="h-3.5 w-3.5 text-red-400" />
+            ) : (
+              <Volume2 className="h-3.5 w-3.5 text-slate-300" />
+            )}
           </button>
         </div>
       </div>
 
-      {/* Animated Avatar Graphic */}
+      {/* Animated avatar graphic */}
       <div className="relative my-auto flex flex-col items-center justify-center">
         <div
           className={`absolute w-56 h-56 rounded-full transition-all duration-700 pointer-events-none ${
@@ -286,27 +143,21 @@ export function MeetingAvatar({
             <div className="relative flex flex-col items-center gap-3">
               {/* Eyes */}
               <div className="flex items-center gap-6">
-                <div
-                  className={`w-3.5 h-3.5 rounded-full transition-all duration-300 ${
-                    effectiveState === 'speaking'
-                      ? 'bg-brand-300 shadow-[0_0_12px_#38bdf8] scale-110'
-                      : effectiveState === 'listening'
-                      ? 'bg-emerald-300 shadow-[0_0_12px_#34d399]'
-                      : 'bg-slate-400'
-                  }`}
-                />
-                <div
-                  className={`w-3.5 h-3.5 rounded-full transition-all duration-300 ${
-                    effectiveState === 'speaking'
-                      ? 'bg-brand-300 shadow-[0_0_12px_#38bdf8] scale-110'
-                      : effectiveState === 'listening'
-                      ? 'bg-emerald-300 shadow-[0_0_12px_#34d399]'
-                      : 'bg-slate-400'
-                  }`}
-                />
+                {[0, 1].map((i) => (
+                  <div
+                    key={i}
+                    className={`w-3.5 h-3.5 rounded-full transition-all duration-300 ${
+                      effectiveState === 'speaking'
+                        ? 'bg-brand-300 shadow-[0_0_12px_#38bdf8] scale-110'
+                        : effectiveState === 'listening'
+                        ? 'bg-emerald-300 shadow-[0_0_12px_#34d399]'
+                        : 'bg-slate-400'
+                    }`}
+                  />
+                ))}
               </div>
 
-              {/* Mouth Waveform / Speaking Animation */}
+              {/* Mouth */}
               <div className="flex items-center gap-1 h-5">
                 {effectiveState === 'speaking' ? (
                   [0.3, 0.8, 1.0, 0.7, 0.4].map((h, i) => (
@@ -340,7 +191,7 @@ export function MeetingAvatar({
         </div>
       </div>
 
-      {/* Closed Captions Subtitles */}
+      {/* Closed captions */}
       {showCaptions && questionText && (
         <div className="w-full max-w-xl px-4 py-3 rounded-xl bg-black/75 backdrop-blur-md border border-white/10 text-center shadow-lg transition-all z-10">
           <div className="flex items-center justify-center gap-1.5 text-[10px] uppercase font-bold tracking-wider text-brand-400 mb-1">
