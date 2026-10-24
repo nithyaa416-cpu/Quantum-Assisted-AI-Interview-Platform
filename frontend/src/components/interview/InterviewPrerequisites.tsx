@@ -6,6 +6,7 @@ import {
 import { Button } from '@/components/ui/Button'
 import { useResumes } from '@/hooks/useResumes'
 import { registerMediaStream, unregisterMediaStream } from '@/utils/mediaStreamManager'
+import { unlockAudioForInterview } from '@/utils/audioSpeechManager'
 import type { StartInterviewPayload } from '@/types'
 
 interface InterviewPrerequisitesProps {
@@ -43,7 +44,11 @@ export function InterviewPrerequisites({
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: true,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
         })
         localStream = stream
         streamRef.current = stream
@@ -117,6 +122,7 @@ export function InterviewPrerequisites({
     integrityAgreed
 
   const handleStart = async () => {
+    unlockAudioForInterview()
     // Stop preliminary device check stream before handing off to the meeting room
     if (streamRef.current) {
       try {

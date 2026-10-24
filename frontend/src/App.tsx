@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Suspense, lazy } from 'react'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { ProtectedRoute } from '@/components/layout/ProtectedRoute'
@@ -17,6 +17,7 @@ const InterviewPage       = lazy(() => import('@/pages/InterviewPage'))
 const InterviewHistoryPage = lazy(() => import('@/pages/InterviewHistoryPage'))
 const CodingInterviewPage  = lazy(() => import('@/pages/CodingInterviewPage'))
 const CodingPracticePage   = lazy(() => import('@/pages/CodingPracticePage'))
+const LandingPage          = lazy(() => import('@/pages/LandingPage'))
 const NotFoundPage        = lazy(() => import('@/pages/NotFoundPage'))
 
 export default function App() {
@@ -25,6 +26,10 @@ export default function App() {
       <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* Public routes */}
+
+          {/* Public landing page — accessible without authentication */}
+          <Route path="/" element={<LandingPage />} />
+
           <Route path="/login"    element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
 
@@ -53,9 +58,6 @@ export default function App() {
             <Route path="/coding"               element={<CodingPracticePage />} />
             <Route path="/coding/:problemId"    element={<CodingPracticePage />} />
           </Route>
-
-          {/* Root redirect */}
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
           {/* 404 */}
           <Route path="*" element={<NotFoundPage />} />
