@@ -722,16 +722,20 @@ class SubmitResponseView(APIView):
                 fallback = evaluate_answer_quality(answer_text, question.expected_concepts)
                 parsed   = parse_llm_evaluation(llm_raw, fallback)
                 score    = parsed['score_01']
-                feedback = parsed['feedback'] or build_ai_feedback(
-                    question_text=question.question_text,
-                    answer_text=answer_text,
-                    expected_concepts=question.expected_concepts,
-                    score=score,
-                    phase=question.phase,
-                    target_role=target_role_str,
-                    job_description=session.job_description or "",
-                    candidate_name=candidate_name_str,
-                )
+                raw_fb   = (parsed.get('feedback') or '').strip()
+                if raw_fb and 'could not be parsed' not in raw_fb.lower() and 'keyword analysis' not in raw_fb.lower():
+                    feedback = raw_fb
+                else:
+                    feedback = build_ai_feedback(
+                        question_text=question.question_text,
+                        answer_text=answer_text,
+                        expected_concepts=question.expected_concepts,
+                        score=score,
+                        phase=question.phase,
+                        target_role=target_role_str,
+                        job_description=session.job_description or "",
+                        candidate_name=candidate_name_str,
+                    )
                 logger.info(
                     'LLM scored: session=%s turn=%d score=%.2f class=%s',
                     session.id, question.turn_number, score, parsed['classification'],

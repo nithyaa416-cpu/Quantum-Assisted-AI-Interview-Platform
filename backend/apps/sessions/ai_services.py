@@ -269,7 +269,7 @@ def query_llama3(prompt: str, system_prompt: str = "") -> Optional[str]:
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0.6,
-                    "max_tokens": 300,
+                    "max_tokens": 512,
                 }
                 data = json.dumps(groq_payload).encode("utf-8")
                 req = urllib.request.Request(
@@ -303,7 +303,7 @@ def query_llama3(prompt: str, system_prompt: str = "") -> Optional[str]:
                     {"role": "user", "content": prompt},
                 ],
                 "temperature": 0.6,
-                "max_tokens": 300,
+                "max_tokens": 512,
             }
             data = json.dumps(openai_payload).encode("utf-8")
             req = urllib.request.Request(
@@ -330,7 +330,7 @@ def query_llama3(prompt: str, system_prompt: str = "") -> Optional[str]:
             "model": ollama_model,
             "prompt": f"{system_prompt}\n\n{prompt}" if system_prompt else prompt,
             "stream": False,
-            "options": {"temperature": 0.7, "num_predict": 256},
+            "options": {"temperature": 0.7, "num_predict": 512},
         }
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(

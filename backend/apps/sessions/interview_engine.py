@@ -686,15 +686,41 @@ def parse_llm_evaluation(llm_response: str, fallback_score: float) -> dict:
     try:
         clean = llm_response.strip()
 
-        if clean.startswith("```"):
-            clean = re.sub(r"^```[a-z]*\n?", "", clean)
-            clean = re.sub(r"\n?```$", "", clean)
+        # Extract JSON from markdown fences if present
+        if "```" in clean:
+            fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", clean)
+            if fence_match:
+                clean = fence_match.group(1).strip()
+            else:
+                clean = re.sub(r"^```[a-z]*\n?", "", clean)
+                clean = re.sub(r"\n?```$", "", clean)
 
-        json_match = re.search(r"\{.*\}", clean, re.DOTALL)
+        json_match = re.search(r"\{[\s\S]*\}", clean)
         if json_match:
             clean = json_match.group(0)
 
-        data = _json.loads(clean)
+        # Remove trailing commas that violate JSON spec
+        clean_sanitized = re.sub(r",\s*([\]}])", r"\1", clean)
+
+        data = None
+        try:
+            data = _json.loads(clean_sanitized)
+        except Exception:
+            try:
+                data = _json.loads(clean)
+            except Exception:
+                # Regex fallback extraction for partial or malformed LLM responses
+                score_match = re.search(r'["\']score["\']\s*:\s*(\d+)', clean)
+                class_match = re.search(r'["\']classification["\']\s*:\s*["\']([a-zA-Z_]+)["\']', clean)
+                fb_match = re.search(r'["\']feedback["\']\s*:\s*["\']([^"\'\\]*(?:\\.[^"\'\\]*)*)["\']', clean)
+                if score_match or fb_match:
+                    data = {
+                        "score": int(score_match.group(1)) if score_match else round(fallback_score * 10),
+                        "classification": class_match.group(1) if class_match else _score_to_classification(fallback_score),
+                        "feedback": fb_match.group(1) if fb_match else "",
+                    }
+                else:
+                    raise
 
         raw_score = data.get("score")
         if not isinstance(raw_score, (int, float)):

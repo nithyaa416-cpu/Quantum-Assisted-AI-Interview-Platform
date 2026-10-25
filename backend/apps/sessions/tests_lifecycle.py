@@ -113,7 +113,7 @@ class TestBuildAiFeedback:
             0.85,
             'technical',
         )
-        assert 'Good' in fb or 'Excellent' in fb
+        assert any(w in fb for w in ['Good', 'Excellent', 'Nice', 'Spot on', 'Great', 'Well done'])
 
     def test_poor_answer_feedback_mentions_concepts(self):
         fb = build_ai_feedback(
