@@ -17,12 +17,18 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo [2/3] Starting Django backend on http://localhost:8000 ...
-start "QAIP Backend" cmd /k "cd /d "%~dp0backend" && call venv\Scripts\activate.bat && python manage.py runserver"
+cd /d "%~dp0backend"
+if exist "venv\Scripts\activate.bat" (
+    start "QAIP Backend" cmd /k "call venv\Scripts\activate.bat && python manage.py runserver"
+) else (
+    start "QAIP Backend" cmd /k "python manage.py runserver"
+)
 
 timeout /t 3 /nobreak >nul
 
 echo [3/3] Starting React frontend on http://localhost:3000 ...
-start "QAIP Frontend" cmd /k "cd /d "%~dp0frontend" && npm run dev"
+cd /d "%~dp0frontend"
+start "QAIP Frontend" cmd /k "npm run dev"
 
 timeout /t 3 /nobreak >nul
 
@@ -36,5 +42,3 @@ echo ================================
 echo.
 echo You can close this window.
 pause
-
-

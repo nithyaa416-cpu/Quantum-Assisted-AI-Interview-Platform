@@ -417,3 +417,210 @@ export interface Assessment {
   }
   generated_at: string
 }
+
+
+// ─── Preparation & QAOA ────────────────────────────────────────────────────────
+
+export interface ActivityPoolItem {
+  id: string
+  topic: string
+  title: string
+  category: 'coding' | 'technical' | 'system_design' | 'behavioral' | 'project'
+  current_score: number
+  target_score: number
+  skill_gap_severity: number
+  role_relevance: number
+  selection_impact_estimate: number
+  estimated_study_hours: number
+  priority: 'high' | 'medium' | 'low'
+  why_selected: string
+  expected_outcome: string
+  recommended_activities: string[]
+  practice_exercises: string[]
+  prerequisites: string[]
+}
+
+export interface InterviewTopicEvaluation {
+  topic: string
+  score_pct: number
+  status: 'passed' | 'marginal' | 'unanswered' | 'low_score' | string
+  priority?: 'high' | 'medium' | 'low' | string
+  summary?: string
+  reason?: string
+  recommendation?: string
+}
+
+export interface InterviewMetrics {
+  total_questions_asked: number
+  questions_answered: number
+  overall_score_pct: number
+}
+
+export interface FeedbackAnalysisData {
+  has_mock_interview: boolean
+  session_id: string | null
+  target_role: {
+    id: string | null
+    role_name: string
+    domain: string
+  }
+  interview_metrics?: InterviewMetrics
+  strong_areas?: InterviewTopicEvaluation[]
+  weak_areas?: InterviewTopicEvaluation[]
+  strengths: string[]
+  weaknesses: Array<{
+    area: string
+    priority: string
+    score?: number
+    recommendation: string
+    question_context?: string
+  }>
+  activity_pool: ActivityPoolItem[]
+  total_activities_available: number
+  disclaimer: string
+}
+
+export interface PracticeModule {
+  id: string
+  plan: string
+  activity_id: string
+  topic: string
+  sub_topics: string[]
+  scheduled_day: number
+  estimated_hours: number
+  priority: 'high' | 'medium' | 'low'
+  why_selected: string
+  expected_outcome: string
+  practice_exercises: string[]
+  prerequisites: string[]
+  order: number
+  status: 'pending' | 'in_progress' | 'completed' | 'skipped'
+  completed_at: string | null
+  resources: Array<{ title: string; url: string; type: string }>
+  is_completed: boolean
+  created_at: string
+}
+
+export interface OptimizationMetadata {
+  algorithm_used: string
+  is_quantum: boolean
+  num_qubits: number
+  circuit_depth: number
+  p_layers: number
+  execution_time_ms: number
+  qaoa_circuit_time_ms: number
+  total_value: number
+  total_hours: number
+  budget_capacity: number
+  repair_applied: boolean
+  raw_solution?: {
+    bitstring: string
+    value: number
+    hours: number
+    is_feasible: boolean
+  }
+  top_measurement_states?: Array<{
+    bitstring: string
+    probability: number
+    value: number
+    hours: number
+    is_feasible: boolean
+  }>
+  classical_comparison?: {
+    classical_algorithm: string
+    classical_optimal_value: number
+    classical_hours: number
+    classical_execution_time_ms: number
+    qaoa_approximation_ratio: number
+  }
+  optimal_parameters?: {
+    gamma: number[]
+    beta: number[]
+  }
+}
+
+export interface PreparationPlan {
+  id: string
+  target_role: string | null
+  target_role_name: string | null
+  session: string | null
+  session_id: string | null
+  preparation_days: number
+  total_hours_budget: number
+  daily_hours: number
+  algorithm_used: string
+  topic_weights: Record<string, number>
+  recommended_sequence: Array<{
+    day: number
+    order: number
+    topic: string
+    title: string
+    hours: number
+    category: string
+    priority: string
+    why_selected: string
+    expected_outcome: string
+    practice_question_types: string[]
+    sub_topics: string[]
+  }>
+  feedback_summary: {
+    has_mock_interview: boolean
+    session_id: string | null
+    target_role: { id: string | null; role_name: string; domain: string }
+    interview_metrics?: InterviewMetrics
+    strong_areas?: InterviewTopicEvaluation[]
+    weak_areas?: InterviewTopicEvaluation[]
+    strengths: string[]
+    weaknesses: any[]
+    disclaimer: string
+    total_activities_evaluated: number
+    total_activities_selected: number
+  }
+  priority_areas: string[]
+  optimization_metadata: OptimizationMetadata
+  qaoa_energy: number | null
+  circuit_depth: number | null
+  is_active: boolean
+  modules_count: number
+  completed_modules: number
+  practice_modules: PracticeModule[]
+  generated_at: string
+  updated_at: string
+}
+
+export interface GeneratePlanPayload {
+  session_id?: string | null
+  target_role_id?: string | null
+  days_remaining: number
+  daily_hours: number
+  total_hours_budget?: number | null
+  priority_areas?: string[]
+  preferred_categories?: string[]
+  force_algorithm?: 'qaoa' | 'classical'
+}
+
+export interface QuantumBenchmarkResult {
+  problem_size_qubits: number
+  total_budget_hours: number
+  circuit_depth: number
+  qaoa_execution_time_ms: number
+  qaoa_circuit_time_ms: number
+  qaoa_total_value: number
+  qaoa_hours_scheduled: number
+  qaoa_is_feasible: boolean
+  repair_applied: boolean
+  classical_comparison: {
+    classical_algorithm: string
+    classical_optimal_value: number
+    classical_hours: number
+    classical_execution_time_ms: number
+    qaoa_approximation_ratio: number
+  }
+  top_measurement_states: Array<{
+    bitstring: string
+    probability: number
+    value: number
+    hours: number
+    is_feasible: boolean
+  }>
+}
