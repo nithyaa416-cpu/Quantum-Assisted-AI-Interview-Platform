@@ -140,8 +140,6 @@ export default function CodingInterviewPage() {
 
   const handleSubmit = async () => {
     if (!problem || isExpired) return
-    const confirmed = window.confirm('Submit your solution?\n\nAll test cases (including hidden ones) will be run.')
-    if (!confirmed) return
     setSubmitResult(null)
     try {
       const result = await submitCode({

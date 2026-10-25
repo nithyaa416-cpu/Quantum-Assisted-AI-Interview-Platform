@@ -1,3 +1,4 @@
+
 /**
  * InterviewCodingPanel
  *
@@ -14,18 +15,18 @@
  * Reuses existing coding components: CodeEditor, ProblemPanel, LanguageSelector, TestCasePanel.
  */
 import { useState, useEffect } from 'react'
-import { Play, Send, Loader2, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react'
+import { Play, Send, Loader2, CheckCircle2, XCircle, AlertTriangle, ChevronRight } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 
-import { CodeEditor }      from '@/components/coding/CodeEditor'
-import { ProblemPanel }    from '@/components/coding/ProblemPanel'
+import { CodeEditor } from '@/components/coding/CodeEditor'
+import { ProblemPanel } from '@/components/coding/ProblemPanel'
 import { LanguageSelector } from '@/components/coding/LanguageSelector'
-import { TestCasePanel }   from '@/components/coding/TestCasePanel'
-import { Button }          from '@/components/ui/Button'
-import { Spinner }         from '@/components/ui/Spinner'
+import { TestCasePanel } from '@/components/coding/TestCasePanel'
+import { Button } from '@/components/ui/Button'
+import { Spinner } from '@/components/ui/Spinner'
 
-import { useRunCode }       from '@/hooks/useCoding'
+import { useRunCode } from '@/hooks/useCoding'
 import { interviewService } from '@/services/interviewService'
 
 import { CODING_LANGUAGES } from '@/types/coding'
@@ -41,8 +42,10 @@ interface InterviewCodingPanelProps {
   sessionId: string
   /** The current interview question ID (coding phase question) */
   questionId: string
-  /** Called after code is successfully submitted — passes the follow-up question text */
+  /** Called after code is successfully submitted */
   onSubmitted: (result: InterviewCodingResult) => void
+  /** Called when candidate proceeds to the next interview question */
+  onContinue?: (nextQuestion: any) => void
   /** Called if user explicitly skips coding */
   onSkip?: () => void
 }
@@ -53,6 +56,7 @@ export function InterviewCodingPanel({
   sessionId,
   questionId,
   onSubmitted,
+  onContinue,
   onSkip,
 }: InterviewCodingPanelProps) {
   // ── Problem fetching ────────────────────────────────────────────────────────
@@ -85,7 +89,7 @@ export function InterviewCodingPanel({
 
   // ── Language / code state ─────────────────────────────────────────────────
   const [language, setLanguage] = useState<CodingLanguage>(DEFAULT_LANG)
-  const [code, setCode]         = useState('')
+  const [code, setCode] = useState('')
   const [starterLoaded, setStarterLoaded] = useState(false)
 
   useEffect(() => {
@@ -121,8 +125,8 @@ export function InterviewCodingPanel({
     setRunResult(null)
     try {
       const result = await runCode({
-        problem_id:  problem.id,
-        language:    language.id,
+        problem_id: problem.id,
+        language: language.id,
         source_code: code,
       })
       setRunResult(result)
@@ -132,9 +136,9 @@ export function InterviewCodingPanel({
   }
 
   // ── Submit (interview — runs ALL test cases, saves as interview attempt) ──
-  const [isSubmitting, setIsSubmitting]   = useState(false)
-  const [submitResult, setSubmitResult]   = useState<InterviewCodingResult | null>(null)
-  const [submitted, setSubmitted]         = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submitResult, setSubmitResult] = useState<InterviewCodingResult | null>(null)
+  const [submitted, setSubmitted] = useState(false)
 
   const handleSubmit = async () => {
     if (!problem || !code.trim() || isSubmitting || submitted) return
@@ -148,8 +152,8 @@ export function InterviewCodingPanel({
     try {
       const result = await interviewService.submitInterviewCode(sessionId, {
         question_id: questionId,
-        problem_id:  problem.id,
-        language:    language.id,
+        problem_id: problem.id,
+        language: language.id,
         source_code: code,
       })
       setSubmitResult(result)
@@ -171,6 +175,34 @@ export function InterviewCodingPanel({
     }
   }
 
+  const handleSkip = async () => {
+    const confirmed = window.confirm(
+      'Skip this coding challenge and continue with the remaining interview questions?'
+    )
+    if (!confirmed) return
+    setIsSubmitting(true)
+    try {
+      const result = await interviewService.submitInterviewCode(sessionId, {
+        question_id: questionId,
+        problem_id: problem?.id || '',
+        language: language.id,
+        source_code: '# Skipped by candidate\n',
+      })
+      setSubmitResult(result)
+      setSubmitted(true)
+      const nextQ = result.next_question || result.follow_up_question
+      if (nextQ && onContinue) {
+        onContinue(nextQ)
+      } else {
+        onSkip?.()
+      }
+    } catch {
+      onSkip?.()
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   const isActionDisabled = isRunning || isSubmitting || submitted || !problem
 
   // ── Status indicator after submission ─────────────────────────────────────
@@ -178,29 +210,41 @@ export function InterviewCodingPanel({
     if (!submitResult) return null
     const { status, passed, total, score } = submitResult
     const pct = Math.round(score * 100)
+    const nextQ = submitResult.next_question || submitResult.follow_up_question
 
     return (
       <div className={clsx(
-        'flex items-center gap-3 px-4 py-3 rounded-xl border text-sm',
+        'flex items-center justify-between gap-3 px-4 py-3 rounded-xl border text-sm shadow-md',
         status === 'accepted'
           ? 'bg-green-500/10 border-green-500/30 text-green-400'
           : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
       )}>
-        {status === 'accepted'
-          ? <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
-          : score >= 0.5
-            ? <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-            : <XCircle className="h-4 w-4 flex-shrink-0" />
-        }
-        <div>
-          <span className="font-semibold capitalize">{status.replace(/_/g, ' ')}</span>
-          <span className="text-slate-400 ml-2">
-            {passed}/{total} tests passed · {pct}% score
-          </span>
+        <div className="flex items-center gap-2.5">
+          {status === 'accepted'
+            ? <CheckCircle2 className="h-5 w-5 flex-shrink-0" />
+            : score >= 0.5
+              ? <AlertTriangle className="h-5 w-5 flex-shrink-0" />
+              : <XCircle className="h-5 w-5 flex-shrink-0" />
+          }
+          <div>
+            <span className="font-semibold capitalize">{status.replace(/_/g, ' ')}</span>
+            <span className="text-slate-400 ml-2">
+              {passed}/{total} tests passed · {pct}% score
+            </span>
+          </div>
         </div>
-        <span className="ml-auto text-xs text-slate-500">
-          Now explain your approach to the interviewer.
-        </span>
+
+        {nextQ && onContinue && (
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => onContinue(nextQ)}
+            icon={<ChevronRight className="h-4 w-4" />}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold shadow-md shadow-emerald-950/40"
+          >
+            Continue Interview &rarr;
+          </Button>
+        )}
       </div>
     )
   }
@@ -243,9 +287,9 @@ export function InterviewCodingPanel({
           {problem.difficulty && (
             <span className={clsx(
               'text-xs px-1.5 py-0.5 rounded font-medium',
-              problem.difficulty === 'easy'   && 'bg-green-500/20 text-green-400',
+              problem.difficulty === 'easy' && 'bg-green-500/20 text-green-400',
               problem.difficulty === 'medium' && 'bg-yellow-500/20 text-yellow-400',
-              problem.difficulty === 'hard'   && 'bg-red-500/20 text-red-400',
+              problem.difficulty === 'hard' && 'bg-red-500/20 text-red-400',
             )}>
               {problem.difficulty}
             </span>
@@ -318,8 +362,19 @@ export function InterviewCodingPanel({
               >
                 {submitted ? 'Submitted' : isSubmitting ? 'Submitting…' : 'Submit'}
               </Button>
+              {submitted && onContinue && (submitResult?.next_question || submitResult?.follow_up_question) && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => onContinue(submitResult.next_question || submitResult.follow_up_question)}
+                  icon={<ChevronRight className="h-3.5 w-3.5" />}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold animate-pulse shadow-md shadow-emerald-950/40"
+                >
+                  Continue Interview &rarr;
+                </Button>
+              )}
               {onSkip && !submitted && (
-                <Button variant="ghost" size="sm" onClick={onSkip}>
+                <Button variant="ghost" size="sm" onClick={handleSkip} disabled={isSubmitting}>
                   Skip
                 </Button>
               )}

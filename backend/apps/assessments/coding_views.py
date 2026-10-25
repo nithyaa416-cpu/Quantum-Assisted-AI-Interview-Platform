@@ -264,17 +264,19 @@ class SubmitCodeView(APIView):
                 tc_obj = all_tcs.filter(pk=tc_id).first()
             except (ValueError, AttributeError):
                 pass
+            is_hidden = tc_obj.is_hidden if tc_obj else False
             entry = {
                 'test_case_id': tc_id,
                 'status':       r['status'],
-                'stdout':       r['stdout'],
-                'stderr':       r['stderr'],
+                'stdout':       '' if is_hidden else r['stdout'],
+                'stderr':       '' if is_hidden else r['stderr'],
                 'time_ms':      r['time_ms'],
                 'memory_kb':    r['memory_kb'],
                 'passed':       r['passed'],
+                'is_hidden':    is_hidden,
                 # Only include input/expected for public test cases
-                'input':          tc_obj.input_data     if tc_obj and not tc_obj.is_hidden else None,
-                'expected_output': tc_obj.expected_output if tc_obj and not tc_obj.is_hidden else None,
+                'input':          None if is_hidden else (tc_obj.input_data if tc_obj else None),
+                'expected_output': None if is_hidden else (tc_obj.expected_output if tc_obj else None),
             }
             safe_results.append(entry)
 
@@ -316,6 +318,7 @@ class SubmitCodeView(APIView):
                 'time_ms':      r['time_ms'],
                 'memory_kb':    r['memory_kb'],
                 'passed':       r['passed'],
+                'is_hidden':    r.get('is_hidden', False),
                 # Only show input/expected for public cases
                 'input':           r.get('input'),
                 'expected_output': r.get('expected_output'),

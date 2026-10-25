@@ -27,7 +27,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   PhoneOff, Maximize2, Minimize2, MessageSquare,
-  Sparkles, ChevronRight, Mic, Clock, Cpu, Volume2, Code2, Play,
+  Sparkles, ChevronRight, Mic, Clock, Cpu, Volume2, Code2, Play, Send,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
@@ -40,6 +40,7 @@ import { InterviewCodingPanel } from './InterviewCodingPanel'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { stopAllMediaStreams, getActiveMediaStream } from '@/utils/mediaStreamManager'
+import { unlockBrowserAudio } from '@/utils/audioSpeechManager'
 import { interviewService } from '@/services/interviewService'
 import type {
   InterviewSession,
@@ -64,12 +65,35 @@ export type InterviewPhase =
 
 // ── Timing Constants ───────────────────────────────────────────────────────────
 const ANSWER_SILENCE_TIMEOUT_MS = 10_000
-const MIN_WORDS_TO_ARM_SILENCE = 4
-const MIN_WORDS_TO_SUBMIT = 3
+const MIN_WORDS_TO_ARM_SILENCE = 2
+const MIN_WORDS_TO_SUBMIT = 2
 const RECOGNITION_COLD_START_MS = 300
 
 const MAX_WEB_SPEECH_MS = (words: number) =>
   Math.min(50_000, Math.max(8_000, words * 600))
+
+function loadVoices(): Promise<SpeechSynthesisVoice[]> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      resolve([])
+      return
+    }
+    const initial = window.speechSynthesis.getVoices()
+    if (initial && initial.length > 0) {
+      resolve(initial)
+      return
+    }
+    const onVoices = () => {
+      window.speechSynthesis.removeEventListener('voiceschanged', onVoices)
+      resolve(window.speechSynthesis.getVoices() || [])
+    }
+    window.speechSynthesis.addEventListener('voiceschanged', onVoices)
+    setTimeout(() => {
+      window.speechSynthesis.removeEventListener('voiceschanged', onVoices)
+      resolve(window.speechSynthesis.getVoices() || [])
+    }, 600)
+  })
+}
 
 // ── Dev-Only Trace Logger ──────────────────────────────────────────────────────
 function logInterviewEvent(event: string, details?: Record<string, any>) {
@@ -130,6 +154,7 @@ interface MeetingRoomProps {
   onContinueNext: () => Promise<void>
   onEndInterview: () => Promise<void>
   candidateName: string
+  onQuestionChange?: (question: InterviewQuestion) => void
 }
 
 // ── Main Component ─────────────────────────────────────────────────────────────
@@ -143,6 +168,7 @@ export function MeetingRoom({
   onContinueNext,
   onEndInterview,
   candidateName,
+  onQuestionChange,
 }: MeetingRoomProps) {
   // ── UI-only state ────────────────────────────────────────────────────────────
   const [showCaptions, setShowCaptions] = useState(true)
@@ -154,23 +180,26 @@ export function MeetingRoom({
 
   // ── Coding phase state ───────────────────────────────────────────────────────
   const isCodingQuestion =
-    (currentQuestion?.question_type === 'coding' && currentQuestion?.topic !== 'coding_introduction') ||
-    (currentQuestion?.phase === 'coding' && (currentQuestion?.text === '[CODING_PROBLEM]' || currentQuestion?.topic !== 'coding_introduction'))
+    currentQuestion?.text === '[CODING_PROBLEM]' ||
+    (currentQuestion?.question_type === 'coding' && currentQuestion?.topic === 'coding')
 
   const [codingSubmitted, setCodingSubmitted] = useState(false)
   const [codingFollowUpText, setCodingFollowUpText] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!isCodingQuestion) {
-      setCodingSubmitted(false)
-      setCodingFollowUpText(null)
-    }
-  }, [currentQuestion?.id]) // eslint-disable-line
-
-  const handleCodingSubmitted = (result: InterviewCodingResult) => {
+  const handleCodingSubmitted = useCallback((result: InterviewCodingResult) => {
     setCodingSubmitted(true)
-    setCodingFollowUpText(result.follow_up_question.text)
-  }
+    setCodingFollowUpText(result.follow_up_question?.text || null)
+  }, [])
+
+  const handleCodingContinue = useCallback((nextQuestion?: any) => {
+    setCodingSubmitted(false)
+    setCodingFollowUpText(null)
+    if (nextQuestion && onQuestionChange) {
+      onQuestionChange(nextQuestion)
+    } else {
+      onContinueNext()
+    }
+  }, [onQuestionChange, onContinueNext])
 
   // ── Core State Machine ───────────────────────────────────────────────────────
   const [phase, setPhase] = useState<InterviewPhase>('QUESTION_READY')
@@ -260,8 +289,9 @@ export function MeetingRoom({
   // ── Unpause speech on any user interaction ──────────────────────────────────
   useEffect(() => {
     const handleGlobalInteraction = () => {
+      unlockBrowserAudio()
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        if (window.speechSynthesis.speaking && window.speechSynthesis.paused) {
+        if (window.speechSynthesis.paused || !window.speechSynthesis.speaking) {
           window.speechSynthesis.resume()
         }
       }
@@ -357,13 +387,29 @@ export function MeetingRoom({
 
   // ── Forward declaration refs ─────────────────────────────────────────────────
   const handleSubmitRef = useRef<() => Promise<void>>(async () => {})
+  const lastRecognizedTextRef = useRef('')
 
   // ── Silence Detection ─────────────────────────────────────────────────────────
+  const triggerAutoSubmit = useCallback(() => {
+    clearSilenceTimers()
+    if (!isSubmittingRef.current && !answerFinalizingRef.current) {
+      logInterviewEvent('ANSWER_FINALIZED', { reason: 'silence_timeout' })
+      handleSubmitRef.current()
+    }
+  }, [clearSilenceTimers])
+
   const resetSilenceDetection = useCallback(
     (currentText: string) => {
-      clearSilenceTimers()
       const words = currentText.trim().split(/\s+/).filter(Boolean)
       if (words.length < MIN_WORDS_TO_ARM_SILENCE) return
+
+      // If speech text hasn't changed and timer is already counting down, don't reset countdown
+      if (currentText.trim() === lastRecognizedTextRef.current.trim() && silenceIntervalRef.current) {
+        return
+      }
+      lastRecognizedTextRef.current = currentText.trim()
+
+      clearSilenceTimers()
 
       let remaining = ANSWER_SILENCE_TIMEOUT_MS / 1000
       setSilenceCountdown(remaining)
@@ -372,24 +418,17 @@ export function MeetingRoom({
         remaining -= 1
         if (remaining <= 0) {
           clearSilenceTimers()
+          triggerAutoSubmit()
         } else {
           setSilenceCountdown(remaining)
         }
       }, 1000)
 
       silenceTimerRef.current = setTimeout(() => {
-        setSilenceCountdown(null)
-        if (
-          (phaseRef.current === 'LISTENING_FOR_CANDIDATE' || phaseRef.current === 'CANDIDATE_SPEAKING') &&
-          !isSubmittingRef.current &&
-          !answerFinalizingRef.current
-        ) {
-          logInterviewEvent('ANSWER_FINALIZED', { reason: 'silence_timeout' })
-          handleSubmitRef.current()
-        }
-      }, ANSWER_SILENCE_TIMEOUT_MS)
+        triggerAutoSubmit()
+      }, ANSWER_SILENCE_TIMEOUT_MS + 200)
     },
-    [clearSilenceTimers]
+    [clearSilenceTimers, triggerAutoSubmit]
   )
 
   // ── Start Recognition ─────────────────────────────────────────────────────────
@@ -618,7 +657,7 @@ export function MeetingRoom({
 
   // ── Primary speakQuestion Entry Point (Web Speech with Keep-Alive) ───────────
   const speakQuestion = useCallback(
-    (text: string, questionId: string, token: number) => {
+    async (text: string, questionId: string, token: number) => {
       if (!text) {
         onSpeechComplete(token, questionId)
         return
@@ -653,7 +692,13 @@ export function MeetingRoom({
       setShowAutoplayOverlay(false)
 
       try {
-        window.speechSynthesis.cancel()
+        // Only cancel if synthesis is actually speaking or pending, then allow Chromium IPC tick to settle
+        if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+          try { window.speechSynthesis.cancel() } catch {}
+          await new Promise((r) => setTimeout(r, 60))
+        }
+
+        if (token !== ttsTokenRef.current || questionId !== currentQuestionIdRef.current) return
 
         const sentences = splitIntoSentences(cleanText)
         if (sentences.length === 0) {
@@ -661,16 +706,32 @@ export function MeetingRoom({
           return
         }
 
-        const voices = window.speechSynthesis.getVoices()
-        const preferredVoice = voices.find(
-          (v) =>
-            (v.name.includes('Google') ||
-              v.name.includes('Natural') ||
-              v.name.includes('Samantha') ||
-              v.name.includes('Zira') ||
-              v.lang.startsWith('en')) &&
-            !v.name.includes('David')
-        )
+        // Wait for voices to be available from the browser
+        const voices = await loadVoices()
+        if (token !== ttsTokenRef.current || questionId !== currentQuestionIdRef.current) return
+
+        const preferredVoice =
+          voices.find(
+            (v) =>
+              (v.name.includes('Google') ||
+                v.name.includes('Natural') ||
+                v.name.includes('Samantha') ||
+                v.name.includes('Zira') ||
+                v.lang.startsWith('en')) &&
+              !v.name.includes('David')
+          ) || voices.find((v) => v.lang.startsWith('en'))
+
+        // Keep-alive pulse to prevent Chrome SpeechSynthesis from pausing on long text
+        if (keepAliveTimer) clearInterval(keepAliveTimer)
+        keepAliveTimer = setInterval(() => {
+          if (!webSpeechActiveRef.current) {
+            if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null }
+            return
+          }
+          if (window.speechSynthesis.paused) {
+            window.speechSynthesis.resume()
+          }
+        }, 3500)
 
         let sentenceIdx = 0
 
@@ -688,6 +749,7 @@ export function MeetingRoom({
 
           const utterance = new SpeechSynthesisUtterance(sentences[idx])
           activeUtterance = utterance
+          utterance.lang = 'en-US'
           utterance.rate = 1.0
           utterance.pitch = 1.0
           if (preferredVoice) utterance.voice = preferredVoice
@@ -722,6 +784,9 @@ export function MeetingRoom({
             }
           }
 
+          if (window.speechSynthesis.paused) {
+            window.speechSynthesis.resume()
+          }
           window.speechSynthesis.speak(utterance)
           window.speechSynthesis.resume()
         }
@@ -734,7 +799,7 @@ export function MeetingRoom({
             logInterviewEvent('TTS_AUTOPLAY_PENDING_CLICK', { questionId })
             setShowAutoplayOverlay(true)
           }
-        }, 1000)
+        }, 1200)
 
         const safetyMs = MAX_WEB_SPEECH_MS(cleanText.split(/\s+/).length)
         wsSafetyTimerRef.current = setTimeout(() => {
@@ -787,6 +852,7 @@ export function MeetingRoom({
     speechEndFiredRef.current = false
     fullTranscriptRef.current = ''
     interimTranscriptRef.current = ''
+    lastRecognizedTextRef.current = ''
     setTranscript('')
     setInterimTranscript('')
     setIsListening(false)
@@ -794,7 +860,11 @@ export function MeetingRoom({
     setPhaseSync('QUESTION_READY')
 
     const token = ttsTokenRef.current
-    speakQuestion(currentQuestion.text, currentQuestion.id, token)
+    const timer = setTimeout(() => {
+      speakQuestion(currentQuestion.text, currentQuestion.id, token)
+    }, 120)
+
+    return () => clearTimeout(timer)
   }, [
     clearAutoAdvanceTimer,
     clearSilenceTimers,
@@ -898,50 +968,43 @@ export function MeetingRoom({
     let wordList = rawSpoken.split(/\s+/).filter(Boolean)
     let finalAnswerText = rawSpoken
 
-    // Whisper recovery fallback if Web Speech missed words or microphone had silence
-    setIsWhisperProcessing(true)
-    try {
-      const audioBlob = await stopAudioRecording()
-      if (audioBlob && audioBlob.size > 2000) {
-        const whisperText = await interviewService.transcribeAudio(audioBlob, session.id)
-        if (whisperText && whisperText.trim()) {
-          const whisperWords = whisperText.trim().split(/\s+/).filter(Boolean)
-          if (whisperWords.length >= MIN_WORDS_TO_SUBMIT && (!currentQuestion?.text || !isQuestionEcho(whisperText, currentQuestion.text))) {
-            finalAnswerText = whisperText.trim()
-            wordList = whisperWords
-            fullTranscriptRef.current = finalAnswerText
-            setTranscript(finalAnswerText)
-            setInterimTranscript('')
+    // Whisper recovery fallback ONLY if Web Speech captured fewer than MIN_WORDS_TO_SUBMIT words
+    if (wordList.length < MIN_WORDS_TO_SUBMIT) {
+      setIsWhisperProcessing(true)
+      try {
+        const audioBlob = await Promise.race([
+          stopAudioRecording(),
+          new Promise<null>((r) => setTimeout(() => r(null), 2500)),
+        ])
+        if (audioBlob && audioBlob.size > 2000) {
+          const whisperPromise = interviewService.transcribeAudio(audioBlob, session.id)
+          const whisperTimeout = new Promise<string>((r) => setTimeout(() => r(''), 4500))
+          const whisperText = await Promise.race([whisperPromise, whisperTimeout])
+          if (whisperText && whisperText.trim()) {
+            const whisperWords = whisperText.trim().split(/\s+/).filter(Boolean)
+            if (whisperWords.length >= MIN_WORDS_TO_SUBMIT) {
+              finalAnswerText = whisperText.trim()
+              wordList = whisperWords
+              fullTranscriptRef.current = finalAnswerText
+              setTranscript(finalAnswerText)
+              setInterimTranscript('')
+            }
           }
         }
+      } catch (err) {
+        console.warn('[Interview] Whisper recovery skipped:', err)
+      } finally {
+        setIsWhisperProcessing(false)
       }
-    } catch (err) {
-      console.warn('[Interview] Whisper recovery skipped:', err)
-    } finally {
-      setIsWhisperProcessing(false)
+    } else {
+      // Audio already transcribed by Web Speech; gracefully stop recorder in background
+      stopAudioRecording().catch(() => {})
     }
 
     logInterviewEvent('ANSWER_FINALIZED', {
       rawWords: wordList.length,
       sample: finalAnswerText.slice(0, 60),
     })
-
-    // Secondary Echo check on finalAnswerText before submitting
-    if (currentQuestion?.text && isQuestionEcho(finalAnswerText, currentQuestion.text)) {
-      logInterviewEvent('SUBMISSION_REJECTED_ECHO', { answer: finalAnswerText.slice(0, 60) })
-      toast.error('Examiner echo detected. Please answer the question in your own words.', { duration: 4500 })
-      answerFinalizingRef.current = false
-      fullTranscriptRef.current = ''
-      interimTranscriptRef.current = ''
-      setTranscript('')
-      setInterimTranscript('')
-      setPhaseSync('LISTENING_FOR_CANDIDATE')
-      setAvatarState('listening')
-      setTimeout(() => {
-        if (currentQuestion?.id) startListening(currentQuestion.id)
-      }, 300)
-      return
-    }
 
     if (wordList.length < MIN_WORDS_TO_SUBMIT) {
       logInterviewEvent('ANSWER_TOO_SHORT_RESUMING', { wordCount: wordList.length })
@@ -950,11 +1013,7 @@ export function MeetingRoom({
       setPhaseSync('LISTENING_FOR_CANDIDATE')
       setAvatarState('listening')
       setTimeout(() => {
-        if (
-          (phaseRef.current === 'LISTENING_FOR_CANDIDATE' || phaseRef.current === 'CANDIDATE_SPEAKING') &&
-          !isSubmittingRef.current &&
-          currentQuestion?.id
-        ) {
+        if (!isSubmittingRef.current && currentQuestion?.id) {
           startListening(currentQuestion.id)
         }
       }, 300)
@@ -971,6 +1030,7 @@ export function MeetingRoom({
     currentQuestion?.id,
     interimTranscript,
     onSubmitAnswer,
+    session.id,
     setPhaseSync,
     speechStartTime,
     startListening,
@@ -1092,64 +1152,15 @@ export function MeetingRoom({
       <main className="flex-1 p-4 sm:p-6 flex flex-col gap-4 min-h-0 relative z-20 overflow-hidden">
 
         {/* Coding phase: Editor */}
-        {isCodingQuestion && !codingSubmitted && (
+        {isCodingQuestion && (
           <div className="flex-1 min-h-0 overflow-hidden">
             <InterviewCodingPanel
               sessionId={session.id}
               questionId={currentQuestion!.id}
               onSubmitted={handleCodingSubmitted}
-              onSkip={onContinueNext}
+              onContinue={handleCodingContinue}
+              onSkip={handleCodingContinue}
             />
-          </div>
-        )}
-
-        {/* Coding phase: Verbal follow-up explanation */}
-        {isCodingQuestion && codingSubmitted && (
-          <div className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
-            <div className="flex-1 min-h-[300px]">
-              <div className="h-full flex flex-col rounded-2xl bg-slate-900/90 border border-orange-500/30 p-5 shadow-xl">
-                <div className="flex items-center gap-2 mb-3">
-                  <Code2 className="h-4 w-4 text-orange-400" />
-                  <span className="text-xs font-bold uppercase tracking-wider text-orange-400">
-                    Coding Explanation
-                  </span>
-                </div>
-                <p className="text-sm text-slate-200 leading-relaxed flex-1">
-                  {codingFollowUpText || 'Please explain your approach and the time/space complexity of your solution.'}
-                </p>
-                <p className="text-xs text-slate-500 mt-4">Answer verbally — the microphone is listening.</p>
-              </div>
-            </div>
-            <div className="w-full lg:w-[360px] flex flex-col gap-4 flex-shrink-0">
-              <div className="flex-1 min-h-[180px]">
-                <CandidateVideoTile
-                  candidateName={candidateName}
-                  onStreamReady={(stream) => { mediaStreamRef.current = stream }}
-                />
-              </div>
-              <div className="h-44 rounded-2xl bg-slate-900/90 border border-slate-800 p-3 flex flex-col">
-                <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
-                  <span className={`w-2 h-2 rounded-full ${isListening ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`} />
-                  <span className="text-xs text-slate-400">{isListening ? 'Listening…' : 'Speak your explanation'}</span>
-                </div>
-                <div className="flex-1 overflow-y-auto py-2 text-xs text-slate-200">
-                  {fullLiveText ? (
-                    <p className="leading-relaxed">
-                      <span>{transcript}</span>
-                      {interimTranscript && <span className="text-brand-300 italic"> {interimTranscript}</span>}
-                    </p>
-                  ) : (
-                    <p className="text-slate-500 text-center mt-4">Explain your solution verbally…</p>
-                  )}
-                </div>
-                {(isSubmitting || isWhisperProcessing) && (
-                  <div className="pt-2 border-t border-slate-800 flex items-center gap-2 text-xs text-brand-400">
-                    <Spinner size="sm" />
-                    <span>Evaluating explanation…</span>
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
         )}
 
@@ -1258,7 +1269,7 @@ export function MeetingRoom({
                   )}
                 </div>
 
-                <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
+                <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-3">
                   {isSubmitting || isWhisperProcessing ? (
                     <div className="flex items-center gap-2 text-xs text-brand-400">
                       <Spinner size="sm" />
@@ -1268,7 +1279,7 @@ export function MeetingRoom({
                     <div className="flex items-center gap-2 text-xs text-amber-300 animate-pulse">
                       <Clock className="h-3.5 w-3.5" />
                       <span>
-                        Pause detected — auto-submitting in <strong>{silenceCountdown}s</strong>. Keep speaking to continue.
+                        Pause detected — auto-submitting in <strong>{silenceCountdown}s</strong>.
                       </span>
                     </div>
                   ) : phase === 'QUESTION_READY' || phase === 'AI_SPEAKING' ? (
@@ -1287,7 +1298,25 @@ export function MeetingRoom({
                       <span>Fully hands-free: speak your answer — 10s pause auto-submits.</span>
                     </div>
                   )}
-                  <span className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">Hands-Free</span>
+
+                  <div className="flex items-center gap-2">
+                    {/* Manual Submit Button if user has spoken words */}
+                    {fullLiveText && fullLiveText.split(/\s+/).filter(Boolean).length >= MIN_WORDS_TO_SUBMIT && !isSubmitting && !isWhisperProcessing && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearSilenceTimers()
+                          handleSubmit()
+                        }}
+                        className="px-3 py-1 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1.5 shadow-md shadow-emerald-950/50 transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                        title="Submit answer now without waiting for the 10-second silence timer"
+                      >
+                        <Send className="h-3 w-3" />
+                        <span>Submit Now</span>
+                      </button>
+                    )}
+                    <span className="text-[10px] text-slate-500 uppercase tracking-widest font-mono">Hands-Free</span>
+                  </div>
                 </div>
               </div>
             </div>

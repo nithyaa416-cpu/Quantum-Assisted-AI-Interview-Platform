@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { clsx } from 'clsx'
 import {
   CheckCircle2, XCircle, Clock, MemoryStick,
-  AlertCircle, PlayCircle, Trophy,
+  AlertCircle, PlayCircle, Trophy, Lock,
 } from 'lucide-react'
 import { Spinner } from '@/components/ui/Spinner'
 import type {
@@ -90,8 +90,11 @@ function RunResultsTab({ result, isRunning }: { result: CodingRunResponse | null
     <div className="space-y-4">
       {/* Summary */}
       <div className="flex items-center justify-between">
-        <StatusBadge status={result.overall_status} />
-        <span className="text-sm text-slate-400">
+        <StatusBadge status={result.passed === result.total && result.overall_status === 'accepted' ? 'accepted' : (result.overall_status === 'accepted' ? 'wrong_answer' : result.overall_status)} />
+        <span className={clsx(
+          "text-sm font-medium",
+          result.passed === result.total ? "text-emerald-400" : "text-red-400"
+        )}>
           {result.passed} / {result.total} passed
         </span>
       </div>
@@ -113,7 +116,7 @@ function RunResultsTab({ result, isRunning }: { result: CodingRunResponse | null
                   <Clock className="h-3 w-3" />{r.time_ms.toFixed(0)}ms
                 </span>
               )}
-              <StatusBadge status={r.passed ? 'accepted' : r.status} />
+              <StatusBadge status={r.passed ? 'accepted' : (r.status === 'accepted' ? 'wrong_answer' : r.status)} />
             </div>
           </div>
           {r.input        && <CodeBox label="Input"           content={r.input} />}
@@ -147,7 +150,7 @@ function SubmitResultTab({
       </div>
     )
   }
-  const accepted = result.status === 'accepted'
+  const accepted = result.status === 'accepted' && result.passed === result.total
   return (
     <div className="space-y-4">
       <div className={clsx(
@@ -156,10 +159,10 @@ function SubmitResultTab({
           ? 'border-emerald-500/30 bg-emerald-500/8'
           : 'border-red-500/30 bg-red-500/8',
       )}>
-        <StatusBadge status={result.status} />
+        <StatusBadge status={accepted ? 'accepted' : (result.status === 'accepted' ? 'wrong_answer' : result.status)} />
         <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
           <div className="text-slate-500">Test cases</div>
-          <div className="text-slate-200 font-medium">{result.passed} / {result.total}</div>
+          <div className={clsx("font-medium", accepted ? "text-emerald-300" : "text-red-300")}>{result.passed} / {result.total}</div>
           {result.runtime_ms !== null && (
             <>
               <div className="text-slate-500">Runtime</div>
@@ -177,23 +180,48 @@ function SubmitResultTab({
         </div>
       </div>
 
-      {/* Show visible test results only */}
-      {result.results.filter(r => r.input !== null).map((r, i) => (
-        <div key={r.test_case_id || i}
-          className={clsx(
-            'rounded-xl border p-3 space-y-2',
-            r.passed ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-red-500/20 bg-red-500/5',
-          )}>
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-400">Test case {i + 1}</span>
-            <StatusBadge status={r.passed ? 'accepted' : r.status} />
+      {/* Show all test cases (2 public with input/output, 4 private with only correct or wrong) */}
+      {result.results.map((r, i) => {
+        const isHidden = r.is_hidden ?? (r.input === null || r.input === undefined)
+        return (
+          <div key={r.test_case_id || i}
+            className={clsx(
+              'rounded-xl border p-3 space-y-2',
+              r.passed ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-red-500/20 bg-red-500/5',
+            )}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-slate-300">Test case {i + 1}</span>
+                {isHidden ? (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-800 text-slate-400 border border-slate-700/60">
+                    <Lock className="w-2.5 h-2.5" />
+                    Private Test Case
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-sky-950/60 text-sky-400 border border-sky-800/40">
+                    Public Test Case
+                  </span>
+                )}
+              </div>
+              <StatusBadge status={r.passed ? 'accepted' : (r.status === 'accepted' ? 'wrong_answer' : r.status)} />
+            </div>
+
+            {/* Public test cases: show input, expected, your output */}
+            {!isHidden ? (
+              <>
+                {r.input           && <CodeBox label="Input"           content={r.input} />}
+                {r.expected_output && <CodeBox label="Expected Output" content={r.expected_output} />}
+                {r.stdout          && <CodeBox label="Your Output"     content={r.stdout} />}
+                {r.stderr          && <CodeBox label="Error"           content={r.stderr} />}
+              </>
+            ) : (
+              <p className="text-xs text-slate-500 italic py-1">
+                Private test case — inputs and outputs are hidden to evaluate problem solving.
+              </p>
+            )}
           </div>
-          {r.input           && <CodeBox label="Input"    content={r.input} />}
-          {r.expected_output && <CodeBox label="Expected" content={r.expected_output} />}
-          {r.stdout          && <CodeBox label="Output"   content={r.stdout} />}
-          {r.stderr          && <CodeBox label="Error"    content={r.stderr} />}
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

@@ -88,7 +88,6 @@ PROBLEMS = [
             {"input": "7", "expected_output": "-1"},
             {"input": "-5 -2 -1 -10", "expected_output": "-2"},
             {"input": "100 200 50 150", "expected_output": "150"},
-            {"input": "-10 -20 -30", "expected_output": "-20"},
         ],
     },
 
@@ -203,7 +202,6 @@ PROBLEMS = [
             {"input": "a", "expected_output": "true"},
             {"input": "ab", "expected_output": "false"},
             {"input": "noon", "expected_output": "true"},
-            {"input": "12321", "expected_output": "true"},
         ],
     },
 
@@ -227,7 +225,7 @@ PROBLEMS = [
             "javascript": "function reverseString(s) {\n    // Write your solution here\n    return \"\";\n}\n",
         },
         "driver_code": {
-            "python": "if __name__ == '__main__':\n    import sys\n    s = sys.stdin.read().rstrip('\\r\\n')\n    print(reverse_string(s))\n",
+            "python": "if __name__ == '__main__':\n    import sys\n    s = sys.stdin.read().rstrip('\\r\\n')\n    res = reverse_string(s)\n    if res is not None:\n        print(res)\n",
             "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        String s = sc.hasNextLine() ? sc.nextLine().replaceAll(\"\\r|\\n\", \"\") : \"\";\n        System.out.println(Solution.reverseString(s));\n    }\n}\n",
             "cpp": "#include <iostream>\n#include <string>\nusing namespace std;\nint main() {\n    string s; getline(cin, s);\n    while (!s.empty() && (s.back() == '\\r' || s.back() == '\\n')) s.pop_back();\n    Solution sol; cout << sol.reverseString(s) << endl;\n    return 0;\n}\n",
             "javascript": "const fs = require('fs');\nconst s = fs.readFileSync(0, 'utf-8').replace(/[\\r\\n]/g, '');\nconsole.log(reverseString(s));\n",
@@ -301,7 +299,7 @@ PROBLEMS = [
             "javascript": "function arraySum(nums) {\n    // Write your solution here\n    return 0;\n}\n",
         },
         "driver_code": {
-            "python": "if __name__ == '__main__':\n    import sys\n    raw = sys.stdin.read().strip()\n    nums = list(map(int, raw.split())) if raw else []\n    print(array_sum(nums))\n",
+            "python": "if __name__ == '__main__':\n    import sys\n    raw = sys.stdin.read().strip()\n    nums = list(map(int, raw.split())) if raw else []\n    res = array_sum(nums)\n    if res is not None:\n        print(res)\n",
             "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        int[] nums = Arrays.stream(sc.nextLine().trim().split(\"\\\\s+\")).mapToInt(Integer::parseInt).toArray();\n        System.out.println(Solution.arraySum(nums));\n    }\n}\n",
             "cpp": "#include <iostream>\n#include <vector>\n#include <sstream>\nusing namespace std;\nint main() {\n    string line; getline(cin, line); istringstream iss(line);\n    vector<int> nums; int x; while (iss >> x) nums.push_back(x);\n    Solution sol; cout << sol.arraySum(nums) << endl; return 0;\n}\n",
             "javascript": "const fs = require('fs');\nconst input = fs.readFileSync(0, 'utf-8').trim();\nconst nums = input ? input.split(/\\s+/).map(Number) : [];\nconsole.log(arraySum(nums));\n",
@@ -314,6 +312,7 @@ PROBLEMS = [
             {"input": "100", "expected_output": "100"},
             {"input": "-10 -20 -30", "expected_output": "-60"},
             {"input": "10 20 30 40 50 60", "expected_output": "210"},
+            {"input": "5 10 15 20", "expected_output": "50"},
         ],
     },
 
@@ -414,7 +413,7 @@ PROBLEMS = [
             "javascript": "function findIndex(nums, target) {\n    // Write your solution here\n    return -1;\n}\n",
         },
         "driver_code": {
-            "python": "if __name__ == '__main__':\n    import sys\n    lines = sys.stdin.read().strip().split('\\n')\n    nums = list(map(int, lines[0].split()))\n    target = int(lines[1].strip())\n    print(find_index(nums, target))\n",
+            "python": "if __name__ == '__main__':\n    import sys\n    lines = sys.stdin.read().strip().split('\\n')\n    nums = list(map(int, lines[0].split()))\n    target = int(lines[1].strip())\n    res = find_index(nums, target)\n    if res is not None:\n        print(res)\n",
             "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        int[] nums = Arrays.stream(sc.nextLine().trim().split(\"\\\\s+\")).mapToInt(Integer::parseInt).toArray();\n        int target = Integer.parseInt(sc.nextLine().trim());\n        System.out.println(Solution.findIndex(nums, target));\n    }\n}\n",
             "cpp": "#include <iostream>\n#include <vector>\n#include <sstream>\nusing namespace std;\nint main() {\n    string line; getline(cin, line); istringstream iss(line);\n    vector<int> nums; int x; while (iss >> x) nums.push_back(x);\n    int target; cin >> target;\n    Solution sol; cout << sol.findIndex(nums, target) << endl; return 0;\n}\n",
             "javascript": "const fs = require('fs');\nconst lines = fs.readFileSync(0, 'utf-8').trim().split('\\n');\nconst nums = lines[0].split(/\\s+/).map(Number);\nconst target = Number(lines[1].trim());\nconsole.log(findIndex(nums, target));\n",
@@ -464,6 +463,7 @@ PROBLEMS = [
             {"input": "1 2 3", "expected_output": "1 2 3"},
             {"input": "0 0 0 1", "expected_output": "1 0 0 0"},
             {"input": "4 0 5 0 0 6", "expected_output": "4 5 6 0 0 0"},
+            {"input": "2 0 1", "expected_output": "2 1 0"},
         ],
     },
 
@@ -524,7 +524,7 @@ PROBLEMS = [
             "javascript": "function factorial(n) {\n    // Write your solution here\n    return 1;\n}\n",
         },
         "driver_code": {
-            "python": "if __name__ == '__main__':\n    import sys\n    raw = sys.stdin.read().strip()\n    n = int(raw) if raw else 0\n    print(factorial(n))\n",
+            "python": "if __name__ == '__main__':\n    import sys\n    raw = sys.stdin.read().strip()\n    n = int(raw) if raw else 0\n    res = factorial(n)\n    if res is not None:\n        print(res)\n",
             "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        int n = sc.nextInt();\n        System.out.println(Solution.factorial(n));\n    }\n}\n",
             "cpp": "#include <iostream>\nusing namespace std;\nint main() {\n    int n; cin >> n; Solution sol; cout << sol.factorial(n) << endl; return 0;\n}\n",
             "javascript": "const fs = require('fs');\nconst n = Number(fs.readFileSync(0, 'utf-8').trim());\nconsole.log(factorial(n));\n",
@@ -561,7 +561,7 @@ PROBLEMS = [
             "javascript": "function fibonacci(n) {\n    // Write your solution here\n    return 0;\n}\n",
         },
         "driver_code": {
-            "python": "if __name__ == '__main__':\n    import sys\n    raw = sys.stdin.read().strip()\n    n = int(raw) if raw else 0\n    print(fibonacci(n))\n",
+            "python": "if __name__ == '__main__':\n    import sys\n    raw = sys.stdin.read().strip()\n    n = int(raw) if raw else 0\n    res = fibonacci(n)\n    if res is not None:\n        print(res)\n",
             "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        int n = sc.nextInt();\n        System.out.println(Solution.fibonacci(n));\n    }\n}\n",
             "cpp": "#include <iostream>\nusing namespace std;\nint main() {\n    int n; cin >> n; Solution sol; cout << sol.fibonacci(n) << endl; return 0;\n}\n",
             "javascript": "const fs = require('fs');\nconst n = Number(fs.readFileSync(0, 'utf-8').trim());\nconsole.log(fibonacci(n));\n",
@@ -615,7 +615,6 @@ PROBLEMS = [
             {"input": "2", "expected_output": "true"},
             {"input": "17", "expected_output": "true"},
             {"input": "25", "expected_output": "false"},
-            {"input": "97", "expected_output": "true"},
         ],
     },
 
@@ -655,6 +654,7 @@ PROBLEMS = [
             {"input": "z", "expected_output": "z"},
             {"input": "interview", "expected_output": "n"},
             {"input": "abacabad", "expected_output": "c"},
+            {"input": "racecar", "expected_output": "e"},
         ],
     },
 
@@ -678,7 +678,7 @@ PROBLEMS = [
             "javascript": "function missingNumber(nums) {\n    // Write your solution here\n    return 0;\n}\n",
         },
         "driver_code": {
-            "python": "if __name__ == '__main__':\n    import sys\n    raw = sys.stdin.read().strip()\n    nums = list(map(int, raw.split())) if raw else []\n    print(missing_number(nums))\n",
+            "python": "if __name__ == '__main__':\n    import sys\n    raw = sys.stdin.read().strip()\n    nums = list(map(int, raw.split())) if raw else []\n    res = missing_number(nums)\n    if res is not None:\n        print(res)\n",
             "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        int[] nums = Arrays.stream(sc.nextLine().trim().split(\"\\\\s+\")).mapToInt(Integer::parseInt).toArray();\n        System.out.println(Solution.missingNumber(nums));\n    }\n}\n",
             "cpp": "#include <iostream>\n#include <vector>\n#include <sstream>\nusing namespace std;\nint main() {\n    string line; getline(cin, line); istringstream iss(line);\n    vector<int> nums; int x; while (iss >> x) nums.push_back(x);\n    Solution sol; cout << sol.missingNumber(nums) << endl; return 0;\n}\n",
             "javascript": "const fs = require('fs');\nconst input = fs.readFileSync(0, 'utf-8').trim();\nconst nums = input.split(/\\s+/).map(Number);\nconsole.log(missingNumber(nums));\n",
@@ -691,6 +691,7 @@ PROBLEMS = [
             {"input": "9 6 4 2 3 5 7 0 1", "expected_output": "8"},
             {"input": "0", "expected_output": "1"},
             {"input": "1", "expected_output": "0"},
+            {"input": "0 2 3", "expected_output": "1"},
         ],
     },
 
@@ -727,6 +728,7 @@ PROBLEMS = [
             {"input": "5\n1", "expected_output": "1 5"},
             {"input": "1 5 9\n2 3 8 10", "expected_output": "1 2 3 5 8 9 10"},
             {"input": "-5 -2 0\n-3 1 4", "expected_output": "-5 -3 -2 0 1 4"},
+            {"input": "2 5 7\n1 3 9", "expected_output": "1 2 3 5 7 9"},
         ],
     },
 
@@ -750,7 +752,7 @@ PROBLEMS = [
             "javascript": "function capitalizeWords(s) {\n    // Write your solution here\n    return \"\";\n}\n",
         },
         "driver_code": {
-            "python": "if __name__ == '__main__':\n    import sys\n    s = sys.stdin.read().rstrip('\\r\\n')\n    print(capitalize_words(s))\n",
+            "python": "if __name__ == '__main__':\n    import sys\n    s = sys.stdin.read().rstrip('\\r\\n')\n    res = capitalize_words(s)\n    if res is not None:\n        print(res)\n",
             "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        String s = sc.hasNextLine() ? sc.nextLine().replaceAll(\"\\r|\\n\", \"\") : \"\";\n        System.out.println(Solution.capitalizeWords(s));\n    }\n}\n",
             "cpp": "#include <iostream>\n#include <string>\nusing namespace std;\nint main() {\n    string s; getline(cin, s);\n    while (!s.empty() && (s.back() == '\\r' || s.back() == '\\n')) s.pop_back();\n    Solution sol; cout << sol.capitalizeWords(s) << endl; return 0;\n}\n",
             "javascript": "const fs = require('fs');\nconst s = fs.readFileSync(0, 'utf-8').replace(/[\\r\\n]/g, '');\nconsole.log(capitalizeWords(s));\n",
@@ -763,6 +765,7 @@ PROBLEMS = [
             {"input": "interview", "expected_output": "Interview"},
             {"input": "first non repeating char", "expected_output": "First Non Repeating Char"},
             {"input": "a b c", "expected_output": "A B C"},
+            {"input": "code clean", "expected_output": "Code Clean"},
         ],
     },
 ]

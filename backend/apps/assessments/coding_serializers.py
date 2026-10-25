@@ -64,6 +64,8 @@ class RunResultSerializer(serializers.Serializer):
     time_ms      = serializers.FloatField(allow_null=True)
     memory_kb    = serializers.IntegerField(allow_null=True)
     passed       = serializers.BooleanField()
+    input        = serializers.CharField(allow_blank=True, required=False, allow_null=True, default=None)
+    expected_output = serializers.CharField(allow_blank=True, required=False, allow_null=True, default=None)
 
 
 class CodingRunResponseSerializer(serializers.Serializer):

@@ -12,6 +12,8 @@ from typing import Optional
 from .judge0_client import (
     run_code, Judge0Error,
     STATUS_ACCEPTED, STATUS_COMPILATION_ERROR,
+    STATUS_WRONG_ANSWER, STATUS_RUNTIME_ERROR,
+    STATUS_TLE, STATUS_MLE, STATUS_INTERNAL_ERROR,
 )
 from .evaluator import outputs_match
 
@@ -128,10 +130,21 @@ def run_test_cases(
         )
         if tc_passed:
             passed_count += 1
+            case_status = STATUS_ACCEPTED
         else:
+            # If the process crashed, timed out, or threw an error, preserve that error status.
+            # If the process ran without error but output did not match, it is wrong_answer.
+            if result['status'] in (
+                STATUS_COMPILATION_ERROR, STATUS_RUNTIME_ERROR,
+                STATUS_TLE, STATUS_MLE, STATUS_INTERNAL_ERROR
+            ):
+                case_status = result['status']
+            else:
+                case_status = STATUS_WRONG_ANSWER
+
             # First non-pass determines the overall status
             if overall_status == STATUS_ACCEPTED:
-                overall_status = result['status']
+                overall_status = case_status
 
         # Track max time + memory
         if result['time_ms'] is not None:
@@ -142,28 +155,34 @@ def run_test_cases(
         # Early exit on compilation error — no point running more test cases
         if result['status'] == STATUS_COMPILATION_ERROR:
             results.append({
-                'test_case_id': tc_id,
-                'status':       result['status'],
-                'stdout':       result['stdout'],
-                'stderr':       result['stderr'],
-                'time_ms':      result['time_ms'],
-                'memory_kb':    result['memory_kb'],
-                'passed':       False,
+                'test_case_id':    tc_id,
+                'status':          STATUS_COMPILATION_ERROR,
+                'stdout':          result['stdout'],
+                'stderr':          result['stderr'],
+                'time_ms':         result['time_ms'],
+                'memory_kb':       result['memory_kb'],
+                'passed':          False,
+                'input':           stdin,
+                'expected_output': expected,
             })
             overall_status = STATUS_COMPILATION_ERROR
             break
 
         results.append({
-            'test_case_id': tc_id,
-            'status':       result['status'] if not tc_passed else STATUS_ACCEPTED,
-            'stdout':       result['stdout'],
-            'stderr':       result['stderr'],
-            'time_ms':      result['time_ms'],
-            'memory_kb':    result['memory_kb'],
-            'passed':       tc_passed,
+            'test_case_id':    tc_id,
+            'status':          case_status,
+            'stdout':          result['stdout'],
+            'stderr':          result['stderr'],
+            'time_ms':         result['time_ms'],
+            'memory_kb':       result['memory_kb'],
+            'passed':          tc_passed,
+            'input':           stdin,
+            'expected_output': expected,
         })
 
     total = len(test_cases)
+    if passed_count < total and overall_status == STATUS_ACCEPTED:
+        overall_status = STATUS_WRONG_ANSWER
 
     return {
         'overall_status': overall_status,

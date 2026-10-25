@@ -149,10 +149,6 @@ export default function CodingPracticePage() {
 
   const handleSubmit = async () => {
     if (!problem) return
-    const confirmed = window.confirm(
-      'Submit your solution?\n\nAll test cases (including hidden ones) will be run.\nThis submission will count towards your practice progress.'
-    )
-    if (!confirmed) return
     setSubmitResult(null)
     try {
       const result = await submitCode({

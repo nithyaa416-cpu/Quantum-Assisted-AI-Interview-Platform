@@ -266,13 +266,21 @@ export interface InterviewCodingResult {
     input: string | null
     expected_output: string | null
   }>
-  follow_up_question: {
+  follow_up_question?: {
     id: string
     text: string
     phase: string
     topic: string
     turn_number: number
   }
+  next_question?: {
+    id: string
+    text: string
+    phase: string
+    topic: string
+    turn_number: number
+  }
+  interview_complete?: boolean
 }
 
 

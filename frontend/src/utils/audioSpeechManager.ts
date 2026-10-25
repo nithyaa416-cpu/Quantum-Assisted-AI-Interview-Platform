@@ -88,7 +88,7 @@ export function unlockBrowserAudio(): void {
       // Warm up voice list
       window.speechSynthesis.getVoices()
     } catch (e) {
-      console.debug('SpeechSynthesis prime warning:', e)
+      console.debug('SpeechSynthesis resume warning:', e)
     }
   }
 }

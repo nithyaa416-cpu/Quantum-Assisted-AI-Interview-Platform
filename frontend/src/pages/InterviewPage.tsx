@@ -121,6 +121,7 @@ function ActiveInterviewMeeting({ sessionId }: { sessionId: string }) {
         onSubmitAnswer={handleSubmit}
         onContinueNext={handleContinue}
         onEndInterview={handleEndInterview}
+        onQuestionChange={(newQ) => setCurrentQuestion(newQ)}
         candidateName={candidateName}
       />
     </div>

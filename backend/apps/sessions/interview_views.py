@@ -946,39 +946,61 @@ class InterviewCodingProblemView(APIView):
         })
 
 
+PRACTICE_20_SLUGS = [
+    "remove-duplicates-from-array",
+    "second-largest",
+    "reverse-of-array",
+    "frequency-count",
+    "sum-of-array",
+    "find-max-min",
+    "move-zeroes-to-end",
+    "merge-two-sorted-arrays",
+    "missing-number",
+    "is-array-sorted",
+    "linear-search-index",
+    "reverse-string",
+    "palindrome-string",
+    "valid-anagram",
+    "count-vowels-and-consonants",
+    "first-non-repeating-char",
+    "capitalize-words",
+    "factorial-of-number",
+    "fibonacci-number",
+    "check-prime-number",
+]
+
+
 def _select_interview_problem(session: InterviewSession, difficulty: str):
     """
-    Adaptively select a coding problem for the interview session.
+    Select a coding problem strictly from the 20 foundational practice problems.
     Avoids problems the student already solved in this session.
     Matches difficulty to the session difficulty level.
     """
     from apps.assessments.models import CodingProblem, CodingSubmission
 
-    # Map difficulty label
-    diff_map = {'easy': 'easy', 'medium': 'medium', 'hard': 'hard',
-                'beginner': 'easy', 'intermediate': 'medium', 'advanced': 'hard'}
-    problem_diff = diff_map.get(difficulty, 'medium')
+    diff_map = {
+        'easy': 'easy', 'medium': 'medium', 'hard': 'hard',
+        'beginner': 'easy', 'intermediate': 'medium', 'advanced': 'hard'
+    }
+    problem_diff = diff_map.get(difficulty, 'easy')
 
-    # Get problems already used in this session
     used_problem_ids = set(
         CodingSubmission.objects.filter(
             session=session, attempt_type='interview', problem__isnull=False
         ).values_list('problem_id', flat=True)
     )
 
-    # Build queryset: correct difficulty, active, not yet used in this session
-    qs = CodingProblem.objects.filter(
-        is_active=True, difficulty=problem_diff
-    ).exclude(id__in=used_problem_ids)
+    # Strictly restrict to the 20 practiced problems
+    base_qs = CodingProblem.objects.filter(is_active=True, slug__in=PRACTICE_20_SLUGS)
 
-    # Try to match topics if target role has coding topics
-    if not qs.exists():
-        # Fallback: any difficulty, not yet used
-        qs = CodingProblem.objects.filter(is_active=True).exclude(id__in=used_problem_ids)
+    # Match difficulty and not yet used in this session
+    qs = base_qs.filter(difficulty=problem_diff).exclude(id__in=used_problem_ids)
 
     if not qs.exists():
-        # Final fallback: any problem at all
-        qs = CodingProblem.objects.filter(is_active=True)
+        qs = base_qs.exclude(id__in=used_problem_ids)
+
+    if not qs.exists():
+        qs = base_qs
 
     import random as _random
     problems = list(qs)
@@ -991,9 +1013,8 @@ class InterviewCodingSubmitView(APIView):
     Submit code during an interview session.
     - Runs code against ALL test cases via Judge0
     - Saves as CodingSubmission(attempt_type='interview')
-    - Returns result + generates a verbal follow-up question for the interviewer
-
-    Body: { question_id, problem_id, language, source_code }
+    - Records StudentResponse for the coding question
+    - Generates next verbal question so interview continues seamlessly
     """
     permission_classes = [IsAuthenticated]
 
@@ -1008,17 +1029,17 @@ class InterviewCodingSubmitView(APIView):
 
         question_id = request.data.get('question_id', '').strip()
         problem_id  = request.data.get('problem_id', '').strip()
-        language    = request.data.get('language', '').strip().lower()
+        language    = request.data.get('language', '').strip().lower() or 'python'
         source_code = request.data.get('source_code', '')
+        is_skipped  = bool(request.data.get('skipped', False) or not source_code.strip() or '# Skipped' in source_code)
 
         if not question_id or not problem_id:
             return _err('VALIDATION_ERROR', 'question_id and problem_id are required.')
-        if not source_code or not source_code.strip():
-            return _err('EMPTY_CODE', 'Source code cannot be empty.')
 
         from apps.assessments.models import CodingProblem, CodingTestCase, CodingSubmission
         from apps.assessments.services.code_runner import run_test_cases
         from apps.assessments.services.judge0_client import get_language_id, Judge0Error
+        from apps.sessions.models import StudentResponse
 
         # Validate language
         try:
@@ -1038,57 +1059,61 @@ class InterviewCodingSubmitView(APIView):
         except CodingProblem.DoesNotExist:
             return _err('NOT_FOUND', 'Problem not found.')
 
-        # Run against ALL test cases
         all_tcs = CodingTestCase.objects.filter(problem=problem).order_by('order')
-        if not all_tcs.exists():
-            return _err('NO_TEST_CASES', 'No test cases configured for this problem.')
-
-        test_cases = [
-            {'id': str(tc.id), 'input': tc.input_data, 'expected_output': tc.expected_output}
-            for tc in all_tcs
-        ]
-
-        try:
-            driver = problem.driver_code.get(language, '') if problem.driver_code else ''
-            run_result = run_test_cases(
-                source_code=source_code,
-                language=language,
-                test_cases=test_cases,
-                time_limit=problem.time_limit_seconds,
-                memory_limit_mb=problem.memory_limit_mb,
-                driver_code=driver,
-            )
-        except Judge0Error as exc:
-            logger.error('Judge0 unavailable during interview submit: %s', exc)
-            return _err('EXECUTION_ENGINE_UNAVAILABLE',
-                        'Code execution engine temporarily unavailable.', 503)
-
-        # Build safe results (strip hidden test data)
-        import uuid as _uuid
+        total = all_tcs.count()
+        passed = 0
+        corr_score = 0.0
         safe_results = []
-        for r in run_result['results']:
-            tc_id = r['test_case_id']
-            tc_obj = None
-            try:
-                _uuid.UUID(str(tc_id))
-                tc_obj = all_tcs.filter(pk=tc_id).first()
-            except (ValueError, AttributeError):
-                pass
-            safe_results.append({
-                'test_case_id': tc_id,
-                'status': r['status'],
-                'stdout': r['stdout'],
-                'stderr': r['stderr'],
-                'time_ms': r['time_ms'],
-                'memory_kb': r['memory_kb'],
-                'passed': r['passed'],
-                'input': tc_obj.input_data if tc_obj and not tc_obj.is_hidden else None,
-                'expected_output': tc_obj.expected_output if tc_obj and not tc_obj.is_hidden else None,
-            })
+        overall_status = 'skipped' if is_skipped else 'failed'
+        runtime_ms = 0
 
-        total  = run_result['total']
-        passed = run_result['passed']
-        corr_score = round(passed / total, 2) if total > 0 else 0.0
+        if not is_skipped and all_tcs.exists():
+            test_cases = [
+                {'id': str(tc.id), 'input': tc.input_data, 'expected_output': tc.expected_output}
+                for tc in all_tcs
+            ]
+
+            try:
+                driver = problem.driver_code.get(language, '') if problem.driver_code else ''
+                run_result = run_test_cases(
+                    source_code=source_code,
+                    language=language,
+                    test_cases=test_cases,
+                    time_limit=problem.time_limit_seconds,
+                    memory_limit_mb=problem.memory_limit_mb,
+                    driver_code=driver,
+                )
+            except Judge0Error as exc:
+                logger.error('Judge0 unavailable during interview submit: %s', exc)
+                return _err('EXECUTION_ENGINE_UNAVAILABLE',
+                            'Code execution engine temporarily unavailable.', 503)
+
+            import uuid as _uuid
+            for r in run_result['results']:
+                tc_id = r['test_case_id']
+                tc_obj = None
+                try:
+                    _uuid.UUID(str(tc_id))
+                    tc_obj = all_tcs.filter(pk=tc_id).first()
+                except (ValueError, AttributeError):
+                    pass
+                safe_results.append({
+                    'test_case_id': tc_id,
+                    'status': r['status'],
+                    'stdout': r['stdout'],
+                    'stderr': r['stderr'],
+                    'time_ms': r['time_ms'],
+                    'memory_kb': r['memory_kb'],
+                    'passed': r['passed'],
+                    'input': tc_obj.input_data if tc_obj and not tc_obj.is_hidden else None,
+                    'expected_output': tc_obj.expected_output if tc_obj and not tc_obj.is_hidden else None,
+                })
+
+            total  = run_result['total']
+            passed = run_result['passed']
+            corr_score = round(passed / total, 2) if total > 0 else 0.0
+            overall_status = run_result['overall_status']
+            runtime_ms = int(run_result['runtime_ms']) if run_result.get('runtime_ms') else 0
 
         # Save as interview submission
         submission = CodingSubmission.objects.create(
@@ -1099,39 +1124,58 @@ class InterviewCodingSubmitView(APIView):
             problem_statement=problem.description,
             language=language,
             code=source_code,
-            status=run_result['overall_status'],
-            execution_output='\n'.join(r['stdout'] for r in run_result['results'] if r['stdout']),
-            stderr='\n'.join(r['stderr'] for r in run_result['results'] if r['stderr']),
+            status=overall_status,
+            execution_output='\n'.join(r['stdout'] for r in safe_results if r.get('stdout')),
+            stderr='\n'.join(r['stderr'] for r in safe_results if r.get('stderr')),
             test_results=safe_results,
             passed_count=passed,
             total_count=total,
-            runtime_ms=int(run_result['runtime_ms']) if run_result['runtime_ms'] else None,
-            memory_kb=run_result['memory_kb'],
-            timed_out=(run_result['overall_status'] == 'time_limit_exceeded'),
+            runtime_ms=runtime_ms,
+            memory_kb=0,
+            timed_out=(overall_status == 'time_limit_exceeded'),
             correctness_score=corr_score,
             overall_score=corr_score,
         )
 
-        # Generate explanation follow-up question based on result
-        if corr_score >= 0.8:
+        # Record StudentResponse for the coding question so the engine marks it answered
+        if not StudentResponse.objects.filter(question=question).exists():
+            feedback_str = (
+                f"Candidate skipped coding problem '{problem.title}'."
+                if is_skipped
+                else f"Solution for '{problem.title}' scored {int(corr_score * 100)}% ({passed}/{total} test cases passed)."
+            )
+            StudentResponse.objects.create(
+                question=question,
+                session=session,
+                transcript=f"Coding submission for {problem.title} ({language}): {passed}/{total} passed.",
+                response_duration_seconds=runtime_ms // 1000 if runtime_ms else 5,
+                score=corr_score,
+                ai_feedback=feedback_str,
+            )
+
+        # Generate follow-up verbal question based on result
+        if is_skipped:
+            follow_up = (
+                f"No problem, we've moved past '{problem.title}'. "
+                "Can you tell me what strategy or approach you would have considered to solve this problem?"
+            )
+        elif corr_score >= 0.8:
             follow_up = (
                 f"Excellent! Your solution for '{problem.title}' passed {passed}/{total} test cases. "
-                "Could you explain your approach? What algorithm did you use, and what is the "
-                "time complexity of your solution?"
+                "Could you walk me through your approach? What algorithm did you use, and what is the "
+                "time and space complexity of your solution?"
             )
         elif corr_score >= 0.4:
             follow_up = (
                 f"Your solution passed {passed}/{total} test cases for '{problem.title}'. "
-                "Can you walk me through your approach and identify where your solution might be failing?"
+                "Can you walk me through your approach and discuss where your solution might be failing?"
             )
         else:
             follow_up = (
                 f"Your solution passed {passed}/{total} test cases for '{problem.title}'. "
-                "Can you explain your approach and how you would debug or improve it? "
-                "What edge cases did you consider?"
+                "Can you explain your approach and how you would debug or optimize it?"
             )
 
-        # Store the follow-up as a new interview question
         new_turn = session.questions.count() + 1
         follow_up_question = InterviewQuestion.objects.create(
             session=session,
@@ -1149,27 +1193,32 @@ class InterviewCodingSubmitView(APIView):
             follow_up_reason='coding_result',
         )
 
+        next_q_data = {
+            'id': str(follow_up_question.id),
+            'text': follow_up_question.question_text,
+            'phase': follow_up_question.phase,
+            'topic': follow_up_question.topic,
+            'difficulty': follow_up_question.difficulty_level,
+            'turn_number': follow_up_question.turn_number,
+        }
+
         logger.info(
-            'Interview coding submit: session=%s problem=%s score=%.2f',
-            session.id, problem.slug, corr_score
+            'Interview coding submit: session=%s problem=%s score=%.2f -> next_q=%s',
+            session.id, problem.slug, corr_score, follow_up_question.id
         )
 
         return _ok({
             'submission_id': str(submission.id),
-            'status': run_result['overall_status'],
+            'status': overall_status,
             'passed': passed,
             'total': total,
             'score': corr_score,
-            'runtime_ms': run_result['runtime_ms'],
-            'memory_kb': run_result['memory_kb'],
+            'runtime_ms': runtime_ms,
+            'memory_kb': 0,
             'results': safe_results,
-            'follow_up_question': {
-                'id': str(follow_up_question.id),
-                'text': follow_up_question.question_text,
-                'phase': 'coding',
-                'topic': 'coding_explanation',
-                'turn_number': follow_up_question.turn_number,
-            },
+            'follow_up_question': next_q_data,
+            'next_question': next_q_data,
+            'interview_complete': False,
         }, 201)
 
 

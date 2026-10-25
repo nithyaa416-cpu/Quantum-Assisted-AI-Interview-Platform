@@ -84,6 +84,7 @@ export interface CodingExecutionResult {
   time_ms: number | null
   memory_kb: number | null
   passed: boolean
+  is_hidden?: boolean
   /** Only present for public test cases */
   input?: string | null
   /** Only present for public test cases */
