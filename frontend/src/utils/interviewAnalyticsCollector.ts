@@ -236,6 +236,18 @@ class InterviewAnalyticsCollector {
    * Get live speech metrics snapshot.
    */
   public getSpeechSnapshot(): LiveSpeechMetrics {
+    if (this.totalWords === 0) {
+      return {
+        totalWords: 0,
+        totalSpeakingTimeSeconds: 0,
+        wordsPerMinute: 0,
+        fluencyScore: 0,
+        pitchModulationScore: 0,
+        pauseCount: 0,
+        articulationQuality: 'hesitant',
+      }
+    }
+
     const durationMinutes = (this.totalSpeechDuration || 1) / 60
     const wpm = Math.round(this.totalWords / durationMinutes)
 
@@ -286,13 +298,29 @@ class InterviewAnalyticsCollector {
    * Get live behavioural metrics snapshot.
    */
   public getBehaviouralSnapshot(): LiveBehaviouralMetrics {
-    const frames = Math.max(1, this.totalVideoFrames)
+    if (this.totalVideoFrames === 0) {
+      return {
+        eyeContactPercentage: 0,
+        postureStabilityScore: 0,
+        attentivenessScore: 0,
+        overallConfidenceScore: 0,
+        dominantExpression: 'neutral',
+        singleHumanCompliancePercentage: 0,
+        phoneDetectedIncidents: 0,
+        multipleFacesIncidents: 0,
+        faceAbsenceIncidents: 0,
+        proctoringStrikesCount: 0,
+        integrityRating: 'verified',
+      }
+    }
+
+    const frames = this.totalVideoFrames
 
     const eyeContactPct = Math.round((this.eyeContactFrames / frames) * 100)
     const singleHumanPct = Math.round((this.singleHumanFrames / frames) * 100)
     const attentiveness = Math.round((this.facingCameraFrames / frames) * 100)
-    const avgPosture = Math.round(this.postureAccumulator / frames) || 85
-    const avgConfidence = Math.round(this.confidenceAccumulator / frames) || 82
+    const avgPosture = Math.round(this.postureAccumulator / frames)
+    const avgConfidence = Math.round(this.confidenceAccumulator / frames)
 
     // Find dominant expression
     let dominant: LiveBehaviouralMetrics['dominantExpression'] = 'confident'

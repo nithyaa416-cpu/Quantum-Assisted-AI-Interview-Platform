@@ -17,27 +17,27 @@ export function AssessmentReportView({ assessment }: AssessmentReportViewProps) 
   const overallPct = Math.round(Number(assessment.overall_score) * 100)
   const techPct = Math.round(Number(assessment.technical_score) * 100)
   const commPct = Math.round(Number(assessment.communication_score) * 100)
-  const behPct = assessment.behavioural_score !== null ? Math.round(Number(assessment.behavioural_score) * 100) : 85
+  const behPct = assessment.behavioural_score !== null ? Math.round(Number(assessment.behavioural_score) * 100) : (overallPct === 0 ? 0 : 50)
   const probPct = Math.round(Number(assessment.problem_solving_score) * 100)
   const codingPct = assessment.coding_score !== null ? Math.round(Number(assessment.coding_score) * 100) : null
 
-  // Speech & Voice metrics
+  // Speech & Voice metrics (no artificial defaults)
   const speech = assessment.speech_metrics || {}
-  const wpm = speech.words_per_minute ?? 135
-  const fluencyScore = speech.fluency_score ?? 88
-  const modulationScore = speech.pitch_modulation_score ?? 82
-  const articulation = speech.articulation_quality ?? 'steady'
+  const wpm = speech.words_per_minute ?? 0
+  const fluencyScore = speech.fluency_score ?? 0
+  const modulationScore = speech.pitch_modulation_score ?? 0
+  const articulation = speech.articulation_quality ?? (overallPct === 0 ? 'unattempted' : 'steady')
 
   // Behavioral & Facial metrics
   const beh = assessment.behavioural_metrics || {}
-  const eyeContactPct = beh.eye_contact_percentage ?? 86
-  const confidenceScore = beh.confidence_score ?? 84
-  const postureScore = beh.posture_stability_score ?? 90
-  const dominantExp = beh.dominant_expression ?? 'confident'
+  const eyeContactPct = beh.eye_contact_percentage ?? 0
+  const confidenceScore = beh.confidence_score ?? 0
+  const postureScore = beh.posture_stability_score ?? 0
+  const dominantExp = beh.dominant_expression ?? (overallPct === 0 ? 'neutral' : 'confident')
   const phoneIncidents = beh.phone_detected_incidents ?? 0
   const singleHumanCompliance = beh.single_human_compliance ?? 100
 
-  // Readiness categorization
+  // Readiness categorization with realistic scoring thresholds
   let readinessBadge: {
     label: string
     color: 'indigo' | 'green' | 'yellow' | 'red' | 'slate' | 'purple'
@@ -47,11 +47,20 @@ export function AssessmentReportView({ assessment }: AssessmentReportViewProps) 
     color: 'green',
     desc: 'Outstanding performance across technical depth and interview poise.',
   }
-  if (overallPct < 60) {
-    readinessBadge = { label: 'Needs Targeted Prep', color: 'yellow', desc: 'Focus on identified core concepts and vocal presentation.' }
+  if (overallPct === 0) {
+    readinessBadge = { label: 'Incomplete / Unanswered', color: 'red', desc: 'No substantive answers recorded. All questions were left blank or unattempted (0%).' }
+  } else if (overallPct < 40) {
+    readinessBadge = { label: 'Needs Critical Preparation', color: 'red', desc: 'Significant knowledge gaps identified across core topics. Intensive foundational review required.' }
+  } else if (overallPct < 60) {
+    readinessBadge = { label: 'Needs Targeted Prep', color: 'yellow', desc: 'Working foundation; focus on strengthening weak areas and communication clarity.' }
   } else if (overallPct < 75) {
     readinessBadge = { label: 'Solid Foundations', color: 'indigo', desc: 'Strong baseline; fine-tune modulation and advanced edge cases.' }
   }
+
+  let scoreColor = 'text-emerald-400'
+  if (overallPct === 0) scoreColor = 'text-rose-500'
+  else if (overallPct < 40) scoreColor = 'text-rose-400'
+  else if (overallPct < 70) scoreColor = 'text-amber-400'
 
   return (
     <div className="space-y-6 animate-slide-up">
@@ -78,7 +87,7 @@ export function AssessmentReportView({ assessment }: AssessmentReportViewProps) 
           {/* Overall score radial / box */}
           <div className="flex items-center gap-4 bg-slate-900/80 border border-slate-700/60 rounded-2xl p-4 shadow-lg">
             <div className="flex flex-col items-center">
-              <span className="text-4xl font-extrabold text-emerald-400 tabular-nums">
+              <span className={`text-4xl font-extrabold ${scoreColor} tabular-nums`}>
                 {overallPct}%
               </span>
               <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold mt-0.5">
@@ -315,12 +324,18 @@ export function AssessmentReportView({ assessment }: AssessmentReportViewProps) 
             <span>Demonstrated Strengths</span>
           </div>
           <ul className="space-y-2.5">
-            {assessment.strengths.map((s, idx) => (
-              <li key={idx} className="flex items-start gap-2.5 text-xs text-slate-300 leading-relaxed">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 mt-1.5 flex-shrink-0" />
-                <span>{s}</span>
+            {assessment.strengths && assessment.strengths.length > 0 ? (
+              assessment.strengths.map((s, idx) => (
+                <li key={idx} className="flex items-start gap-2.5 text-xs text-slate-300 leading-relaxed">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 mt-1.5 flex-shrink-0" />
+                  <span>{s}</span>
+                </li>
+              ))
+            ) : (
+              <li className="text-xs text-slate-500 italic py-2">
+                No verified strengths identified in this session. All questions were left unattempted or scored below 70%.
               </li>
-            ))}
+            )}
           </ul>
         </Card>
 

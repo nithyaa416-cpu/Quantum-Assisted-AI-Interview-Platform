@@ -10,6 +10,7 @@ import uuid
 from django.db import models
 from apps.accounts.models import StudentProfile
 from apps.resumes.models import TargetRole
+from apps.sessions.models import InterviewSession
 
 
 class PreparationPlan(models.Model):
@@ -31,12 +32,30 @@ class PreparationPlan(models.Model):
         blank=True,
         related_name='preparation_plans'
     )
+    session = models.ForeignKey(
+        InterviewSession,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='preparation_plans'
+    )
     preparation_days = models.IntegerField(default=30)
+    total_hours_budget = models.FloatField(default=20.0)
+    daily_hours = models.FloatField(default=2.0)
+    algorithm_used = models.CharField(max_length=50, default='qaoa')  # 'qaoa' or 'classical_fallback'
+
     # QAOA output: topic → priority weight (0.0–1.0)
     # e.g. {"Data Structures": 0.9, "System Design": 0.7, "SQL": 0.5}
     topic_weights = models.JSONField(default=dict, blank=True)
     # Ordered list of {topic, day, hours, sub_topics, practice_question_types}
     recommended_sequence = models.JSONField(default=list, blank=True)
+    # Detailed summary of feedback analysis (strengths, gaps, role alignment)
+    feedback_summary = models.JSONField(default=dict, blank=True)
+    # Candidate-specified priority focus areas
+    priority_areas = models.JSONField(default=list, blank=True)
+    # Comprehensive optimization metadata (qubits, circuit depth, energy, classical comparison)
+    optimization_metadata = models.JSONField(default=dict, blank=True)
+
     # QAOA objective energy value (lower = better optimisation)
     qaoa_energy = models.FloatField(null=True, blank=True)
     # QAOA circuit depth used
@@ -92,10 +111,18 @@ class PracticeModule(models.Model):
         on_delete=models.CASCADE,
         related_name='practice_modules'
     )
+    activity_id = models.CharField(max_length=100, blank=True, default='')
     topic = models.CharField(max_length=255)
     sub_topics = models.JSONField(default=list, blank=True)
     scheduled_day = models.PositiveIntegerField()
     estimated_hours = models.DecimalField(max_digits=4, decimal_places=1, default=2.0)
+    priority = models.CharField(max_length=20, default='medium')
+    why_selected = models.TextField(blank=True, default='')
+    expected_outcome = models.TextField(blank=True, default='')
+    practice_exercises = models.JSONField(default=list, blank=True)
+    prerequisites = models.JSONField(default=list, blank=True)
+    order = models.PositiveIntegerField(default=1)
+
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     completed_at = models.DateTimeField(null=True, blank=True)
     # Curated learning resources: [{title, url, type}]
@@ -106,7 +133,7 @@ class PracticeModule(models.Model):
         db_table = 'preparation_practice_module'
         verbose_name = 'Practice Module'
         verbose_name_plural = 'Practice Modules'
-        ordering = ['scheduled_day', 'topic']
+        ordering = ['scheduled_day', 'order', 'topic']
         indexes = [
             models.Index(fields=['plan', 'scheduled_day']),
             models.Index(fields=['student', 'status']),
