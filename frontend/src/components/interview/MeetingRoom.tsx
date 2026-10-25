@@ -1352,7 +1352,15 @@ export function MeetingRoom({
                 <span className="text-[11px] text-slate-400 font-normal">Immediate Feedback</span>
               </div>
               <p className="text-sm font-medium text-slate-100 italic leading-relaxed pl-2 border-l-2 border-brand-500">
-                &ldquo;{lastFeedback.response_saved?.feedback || 'Good response. Proceeding to the next question.'}&rdquo;
+                &ldquo;
+                {(() => {
+                  const fb = lastFeedback.response_saved?.feedback
+                  if (!fb || fb.toLowerCase().includes('could not be parsed') || fb.toLowerCase().includes('keyword analysis')) {
+                    return "Good response. Let's continue exploring this topic."
+                  }
+                  return fb
+                })()}
+                &rdquo;
               </p>
             </div>
 
